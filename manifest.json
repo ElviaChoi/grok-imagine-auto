@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "Grok Imagine Video Automator",
+  "description": "Upload one image, run multiple Grok Imagine video prompts, upscale, and download numbered videos.",
+  "version": "0.1.0",
+  "permissions": [
+    "activeTab",
+    "downloads",
+    "sidePanel",
+    "unlimitedStorage",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://grok.com/*",
+    "https://assets.grok.com/*",
+    "https://imagine-public.x.ai/*"
+  ],
+  "action": {
+    "default_title": "Grok Video Auto",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "side_panel": {
+    "default_path": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://grok.com/imagine*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}

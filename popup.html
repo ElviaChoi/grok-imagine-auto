@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Grok Video Auto</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main>
+      <header class="top">
+        <h1>Grok Video Auto</h1>
+        <p class="hint">장면별 이미지와 프롬프트를 넣으면 선택한 설정으로 순서대로 생성하고 저장합니다.</p>
+      </header>
+
+      <div class="scene-toolbar">
+        <button id="addScene" type="button" class="secondary">장면 추가</button>
+        <button id="make20" type="button" class="secondary">20개로 맞추기</button>
+        <button id="clearPrompts" type="button" class="secondary danger">프롬프트 지우기</button>
+      </div>
+
+      <section class="generation-settings" aria-label="생성 설정">
+        <div class="segmented" data-setting="mode">
+          <span>생성</span>
+          <button type="button" data-value="image">이미지</button>
+          <button type="button" data-value="video">비디오</button>
+        </div>
+        <div class="segmented" data-setting="resolution">
+          <span>해상도</span>
+          <button type="button" data-value="480p">480p</button>
+          <button type="button" data-value="720p">720p</button>
+        </div>
+        <div class="segmented" data-setting="duration">
+          <span>길이</span>
+          <button type="button" data-value="6s">6s</button>
+          <button type="button" data-value="10s">10s</button>
+        </div>
+        <div class="segmented" data-setting="aspectRatio">
+          <span>비율</span>
+          <button type="button" data-value="16:9">16:9</button>
+          <button type="button" data-value="9:16">9:16</button>
+        </div>
+      </section>
+
+      <section id="sceneList" class="scene-list" aria-label="장면 목록"></section>
+
+      <section class="settings">
+        <div class="row">
+          <label class="field small">
+            <span>파일명 접두어</span>
+            <input id="prefix" type="text" value="grok-video">
+          </label>
+          <label class="field small">
+            <span>시작 번호</span>
+            <input id="startIndex" type="number" min="1" value="1">
+          </label>
+        </div>
+
+        <label class="check">
+          <input id="upscale" type="checkbox" checked>
+          <span>생성 후 업스케일 시도</span>
+        </label>
+
+        <div class="buttons">
+          <button id="start">시작</button>
+          <button id="stop" class="secondary">중지</button>
+        </div>
+
+        <pre id="status">대기 중</pre>
+      </section>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
