@@ -35,6 +35,15 @@ function readFileAsDataUrl(file) {
   });
 }
 
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file, "utf-8");
+  });
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -75,6 +84,15 @@ function createSceneRow(index, prompt = "") {
   });
 
   return row;
+}
+
+function setSceneImage(row, file) {
+  if (!file) return;
+  const input = row.querySelector(".scene-image");
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  input.files = dt.files;
+  input.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
 function addScene(prompt = "") {
@@ -140,6 +158,136 @@ function splitLegacyPrompts(value) {
   return String(value).split(/\r?\n/);
 }
 
+function baseFileName(value) {
+  return String(value || "")
+    .trim()
+    .split(/[\\/]/)
+    .pop()
+    .trim();
+}
+
+function stripExtension(value) {
+  return baseFileName(value).replace(/\.[^.]+$/, "");
+}
+
+function fileKey(value) {
+  return baseFileName(value).toLowerCase();
+}
+
+function fileStemKey(value) {
+  return stripExtension(value).toLowerCase();
+}
+
+function parseDelimitedRows(text) {
+  const normalized = String(text || "").replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+  const delimiter = normalized.split("\n", 1)[0].includes("\t") ? "\t" : ",";
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+
+  for (let i = 0; i < normalized.length; i += 1) {
+    const char = normalized[i];
+    const next = normalized[i + 1];
+
+    if (char === '"') {
+      if (quoted && next === '"') {
+        cell += '"';
+        i += 1;
+      } else {
+        quoted = !quoted;
+      }
+      continue;
+    }
+
+    if (!quoted && char === delimiter) {
+      row.push(cell);
+      cell = "";
+      continue;
+    }
+
+    if (!quoted && char === "\n") {
+      row.push(cell);
+      if (row.some((value) => value.trim())) rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+
+    cell += char;
+  }
+
+  row.push(cell);
+  if (row.some((value) => value.trim())) rows.push(row);
+  return rows;
+}
+
+function tableRowsToScenes(rows) {
+  if (!rows.length) return [];
+
+  const header = rows[0].map((value) => value.trim().toLowerCase());
+  const hasHeader = header.some((value) =>
+    ["image", "imagefile", "file", "filename", "이미지", "파일명", "prompt", "프롬프트"].includes(value)
+  );
+  const dataRows = hasHeader ? rows.slice(1) : rows;
+  const imageIndex = hasHeader
+    ? header.findIndex((value) => ["image", "imagefile", "file", "filename", "이미지", "파일명"].includes(value))
+    : 0;
+  const promptIndex = hasHeader
+    ? header.findIndex((value) => ["prompt", "프롬프트"].includes(value))
+    : 1;
+
+  return dataRows
+    .map((row) => ({
+      imageName: (row[imageIndex] || "").trim(),
+      prompt: (row[promptIndex >= 0 ? promptIndex : 0] || "").trim()
+    }))
+    .filter((item) => item.prompt || item.imageName);
+}
+
+async function importScenesFromTable() {
+  const tableFile = $("#tableFile").files[0];
+  if (!tableFile) {
+    throw new Error("CSV 또는 TSV 파일을 선택해 주세요.");
+  }
+  if (/\.(xlsx|xls)$/i.test(tableFile.name)) {
+    throw new Error("엑셀 .xlsx 파일은 직접 읽을 수 없습니다. 엑셀에서 'CSV UTF-8'로 저장한 파일을 선택해 주세요.");
+  }
+
+  const text = await readFileAsText(tableFile);
+  const imported = tableRowsToScenes(parseDelimitedRows(text));
+  if (!imported.length) {
+    throw new Error("가져올 장면이 없습니다. image,prompt 형식인지 확인해 주세요.");
+  }
+
+  const imageFiles = [...$("#bulkImages").files];
+  const imageMap = new Map();
+  imageFiles.forEach((file) => {
+    if (!imageMap.has(fileKey(file.name))) imageMap.set(fileKey(file.name), file);
+    if (!imageMap.has(fileStemKey(file.name))) imageMap.set(fileStemKey(file.name), file);
+  });
+
+  sceneList.innerHTML = "";
+  imported.forEach((item, index) => {
+    addScene(item.prompt);
+    const row = sceneList.lastElementChild;
+    const matchedFile = item.imageName
+      ? imageMap.get(fileKey(item.imageName)) || imageMap.get(fileStemKey(item.imageName))
+      : imageFiles[index];
+    setSceneImage(row, matchedFile);
+  });
+
+  renumberScenes();
+  await saveSettings();
+
+  const matchedCount = [...sceneList.querySelectorAll(".scene-image")].filter((input) => input.files[0]).length;
+  const unmatchedCount = imported.length - matchedCount;
+  setStatus(
+    `${imported.length}개 장면을 불러왔습니다. 이미지 매칭: ${matchedCount}/${imported.length}` +
+      (unmatchedCount ? `\n매칭되지 않은 이미지 ${unmatchedCount}개가 있습니다. image 열의 파일명을 확인해 주세요.` : "")
+  );
+}
+
 async function loadSettings() {
   const saved = await chrome.storage.local.get(STORAGE_KEY);
   const settings = saved[STORAGE_KEY] || {};
@@ -185,6 +333,14 @@ function bindAutosave() {
 
   $("#make20").addEventListener("click", () => {
     ensureSceneCount(TARGET_SCENE_COUNT);
+  });
+
+  $("#importScenes").addEventListener("click", async () => {
+    try {
+      await importScenesFromTable();
+    } catch (error) {
+      setStatus(`오류: ${error.message}`);
+    }
   });
 
   document.querySelectorAll(".segmented button[data-value]").forEach((button) => {

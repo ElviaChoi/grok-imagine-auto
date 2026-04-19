@@ -7,6 +7,9 @@ Thumbs.db
 # Logs
 *.log
 
+# Local development dependencies
+node_modules/
+
 # Packaged extension archives
 *.zip
 *.crx

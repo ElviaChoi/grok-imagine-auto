@@ -46,6 +46,49 @@ h1 {
   flex: 0 0 auto;
 }
 
+.bulk-import {
+  flex: 0 0 auto;
+  padding: 8px;
+  border: 1px solid #333;
+  border-radius: 8px;
+  background: #171717;
+}
+
+.bulk-import summary {
+  cursor: pointer;
+  color: #d6d6d6;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.import-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.compact {
+  margin-bottom: 0;
+}
+
+.bulk-import button {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 10px;
+}
+
+.import-help {
+  margin: 8px 0 0;
+  color: #aaa;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.import-help code {
+  color: #d7f5d7;
+}
+
 .generation-settings {
   display: grid;
   grid-template-columns: 1fr 1fr;

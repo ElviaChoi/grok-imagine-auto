@@ -19,6 +19,22 @@
         <button id="clearPrompts" type="button" class="secondary danger">프롬프트 지우기</button>
       </div>
 
+      <details class="bulk-import">
+        <summary>CSV/TSV로 장면 채우기</summary>
+        <div class="import-grid">
+          <label class="field compact">
+            <span>표 파일</span>
+            <input id="tableFile" type="file" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values">
+          </label>
+          <label class="field compact">
+            <span>이미지 여러 장</span>
+            <input id="bulkImages" type="file" accept="image/*" multiple>
+          </label>
+        </div>
+        <button id="importScenes" type="button" class="secondary">표 내용으로 채우기</button>
+        <p class="import-help">엑셀 파일은 CSV UTF-8로 저장해서 넣어주세요. 권장 헤더: <code>image,prompt</code>. 확장자 없이 적어도 이미지 파일명과 자동 매칭됩니다.</p>
+      </details>
+
       <section class="generation-settings" aria-label="생성 설정">
         <div class="segmented" data-setting="mode">
           <span>생성</span>
