@@ -110,6 +110,19 @@ h1 {
   background: #202020;
 }
 
+.segmented.wide {
+  grid-column: 1 / -1;
+  grid-template-columns: 42px minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.segmented.hidden {
+  display: none;
+}
+
+.hidden {
+  display: none !important;
+}
+
 .segmented span {
   padding: 0 2px;
   color: #d6d6d6;
@@ -195,6 +208,10 @@ h1 {
   white-space: nowrap;
 }
 
+.image-field.disabled {
+  opacity: 0.55;
+}
+
 input,
 textarea,
 button {
@@ -234,6 +251,40 @@ textarea {
 
 .check input {
   width: auto;
+}
+
+.recovery-panel {
+  margin-bottom: 12px;
+  padding: 9px;
+  border: 1px solid #4b3a22;
+  border-radius: 8px;
+  background: #1f1910;
+}
+
+.recovery-panel strong {
+  display: block;
+  margin-bottom: 5px;
+  color: #ffe0ad;
+  font-size: 12px;
+}
+
+.recovery-panel p {
+  margin: 0 0 8px;
+  color: #e5d6bd;
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+}
+
+.recovery-buttons {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.recovery-buttons button {
+  padding: 7px 5px;
+  font-size: 11px;
 }
 
 .buttons {

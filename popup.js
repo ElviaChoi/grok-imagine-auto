@@ -1,10 +1,14 @@
 const $ = (selector) => document.querySelector(selector);
 
 const STORAGE_KEY = "grokVideoAutoSettings";
+const SESSION_KEY = "grokVideoAutoSession";
 const DEFAULT_SCENE_COUNT = 3;
 const TARGET_SCENE_COUNT = 20;
 const DEFAULT_SETTINGS = {
+  sourceType: "imagePrompt",
   mode: "video",
+  imageQuality: "speed",
+  imageDownloadScope: "first",
   resolution: "480p",
   duration: "6s",
   aspectRatio: "16:9"
@@ -14,11 +18,48 @@ const sceneList = $("#sceneList");
 const statusEl = $("#status");
 const startButton = $("#start");
 const stopButton = $("#stop");
+const recoveryPanel = $("#recoveryPanel");
+const recoveryText = $("#recoveryText");
 
 let saveTimer = 0;
 
 function setStatus(text) {
   statusEl.textContent = text;
+}
+
+function positiveInteger(value, fallback = 1) {
+  const number = Math.floor(Number(value));
+  return Number.isFinite(number) && number >= 1 ? number : fallback;
+}
+
+function formatSession(session) {
+  const total = session.payload?.scenes?.length || 0;
+  const sceneNumber = Math.min((session.nextIndex || 0) + 1, total);
+  const phaseLabels = {
+    start: "시작 전",
+    editing: "입력 준비",
+    submitting: "제출 중",
+    submitted: "생성 대기",
+    downloading: "다운로드",
+    ready: "다음 장면 준비"
+  };
+  const phase = phaseLabels[session.phase] || session.phase || "대기";
+  const error = session.error?.message ? `\n마지막 오류: ${session.error.message}` : "";
+  return `${sceneNumber}/${total}번 장면에서 멈춰 있습니다. 단계: ${phase}${error}`;
+}
+
+async function refreshRecoveryState() {
+  const session = await chrome.storage.local.get(SESSION_KEY).then((result) => result[SESSION_KEY]);
+  const hasRecoverableSession = Boolean(
+    session?.active &&
+      session?.payload?.scenes?.length &&
+      session.nextIndex < session.payload.scenes.length
+  );
+
+  recoveryPanel.hidden = !hasRecoverableSession;
+  if (hasRecoverableSession) {
+    recoveryText.textContent = formatSession(session);
+  }
 }
 
 function scheduleSave() {
@@ -61,7 +102,7 @@ function createSceneRow(index, prompt = "") {
       <strong>장면 ${index + 1}</strong>
       <button type="button" class="remove-scene" title="장면 삭제">삭제</button>
     </div>
-    <label class="field">
+    <label class="field image-field">
       <span>이미지</span>
       <input class="scene-image" type="file" accept="image/*">
       <small class="file-name">선택된 이미지 없음</small>
@@ -97,6 +138,7 @@ function setSceneImage(row, file) {
 
 function addScene(prompt = "") {
   sceneList.appendChild(createSceneRow(sceneList.children.length, prompt));
+  updateSourceTypeUi();
 }
 
 function renumberScenes() {
@@ -135,6 +177,8 @@ function setSegmentedValue(name, value) {
   group.querySelectorAll("button[data-value]").forEach((button) => {
     button.classList.toggle("active", button.dataset.value === value);
   });
+  if (name === "sourceType") updateSourceTypeUi();
+  if (name === "mode") updateModeUi();
 }
 
 function getSegmentedValue(name) {
@@ -146,11 +190,47 @@ function getSegmentedValue(name) {
 
 function getGenerationSettings() {
   return {
+    sourceType: getSegmentedValue("sourceType"),
     mode: getSegmentedValue("mode"),
+    imageQuality: getSegmentedValue("imageQuality"),
+    imageDownloadScope: getSegmentedValue("imageDownloadScope"),
     resolution: getSegmentedValue("resolution"),
     duration: getSegmentedValue("duration"),
     aspectRatio: getSegmentedValue("aspectRatio")
   };
+}
+
+function updateModeUi() {
+  const imageMode = getSegmentedValue("mode") === "image";
+
+  document.querySelectorAll(".image-only").forEach((group) => {
+    group.classList.toggle("hidden", !imageMode);
+  });
+
+  document.querySelectorAll('[data-setting="resolution"], [data-setting="duration"]').forEach((group) => {
+    group.classList.toggle("hidden", imageMode);
+  });
+
+  document.querySelectorAll(".video-only").forEach((item) => {
+    item.classList.toggle("hidden", imageMode);
+  });
+}
+
+function updateSourceTypeUi() {
+  const promptOnly = getSegmentedValue("sourceType") === "promptOnly";
+
+  sceneList.querySelectorAll(".scene").forEach((row) => {
+    const field = row.querySelector(".image-field");
+    const input = row.querySelector(".scene-image");
+    const fileName = row.querySelector(".file-name");
+    if (!field || !input || !fileName) return;
+
+    field.classList.toggle("disabled", promptOnly);
+    input.disabled = promptOnly;
+    fileName.textContent = promptOnly
+      ? "프롬프트만 모드에서는 사용 안 함"
+      : input.files[0]?.name || "선택된 이미지 없음";
+  });
 }
 
 function splitLegacyPrompts(value) {
@@ -278,6 +358,7 @@ async function importScenesFromTable() {
   });
 
   renumberScenes();
+  updateSourceTypeUi();
   await saveSettings();
 
   const matchedCount = [...sceneList.querySelectorAll(".scene-image")].filter((input) => input.files[0]).length;
@@ -305,6 +386,7 @@ async function loadSettings() {
 
   const generation = { ...DEFAULT_SETTINGS, ...(settings.generation || {}) };
   Object.entries(generation).forEach(([name, value]) => setSegmentedValue(name, value));
+  updateModeUi();
 }
 
 async function saveSettings() {
@@ -373,19 +455,21 @@ async function sendToTab(tabId, message) {
 
 async function ensureContentScript(tabId) {
   try {
-    await sendToTab(tabId, { type: "GROK_AUTO_PING" });
+    await sendToTab(tabId, { type: "GROK_AUTO_PING_V2" });
   } catch {
     await chrome.scripting.executeScript({
       target: { tabId },
       files: ["content.js"]
     });
-    await sendToTab(tabId, { type: "GROK_AUTO_PING" });
+    await sendToTab(tabId, { type: "GROK_AUTO_PING_V2" });
   }
 }
 
 async function buildScenes() {
   const rows = [...sceneList.querySelectorAll(".scene")];
   const scenes = [];
+  const sourceType = getSegmentedValue("sourceType");
+  const requiresImage = sourceType !== "promptOnly";
 
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
@@ -395,25 +479,32 @@ async function buildScenes() {
     if (!file && !prompt) {
       continue;
     }
-    if (!file) {
+    if (requiresImage && !file) {
       throw new Error(`장면 ${index + 1}에 이미지가 없습니다.`);
     }
     if (!prompt) {
       throw new Error(`장면 ${index + 1}에 프롬프트가 없습니다.`);
     }
 
-    scenes.push({
-      prompt,
-      image: {
+    const scene = { prompt };
+
+    if (file && requiresImage) {
+      scene.image = {
         name: file.name,
         type: file.type || "image/png",
         dataUrl: await readFileAsDataUrl(file)
-      }
-    });
+      };
+    }
+
+    scenes.push(scene);
   }
 
   if (!scenes.length) {
-    throw new Error("실행할 장면이 없습니다. 이미지와 프롬프트를 넣어 주세요.");
+    throw new Error(
+      requiresImage
+        ? "실행할 장면이 없습니다. 이미지와 프롬프트를 넣어 주세요."
+        : "실행할 장면이 없습니다. 프롬프트를 넣어 주세요."
+    );
   }
 
   return scenes;
@@ -422,6 +513,7 @@ async function buildScenes() {
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type === "GROK_AUTO_STATUS") {
     setStatus(message.text);
+    refreshRecoveryState().catch(() => {});
   }
 });
 
@@ -438,12 +530,12 @@ startButton.addEventListener("click", async () => {
     const payload = {
       scenes,
       prefix: $("#prefix").value.trim() || "grok-video",
-      startIndex: Math.max(1, Number($("#startIndex").value || 1)),
+      startIndex: positiveInteger($("#startIndex").value),
       upscale: $("#upscale").checked,
       generation: getGenerationSettings()
     };
 
-    await sendToTab(tab.id, { type: "GROK_AUTO_START", payload });
+    await sendToTab(tab.id, { type: "GROK_AUTO_START_V2", payload });
     setStatus(`시작됨: ${scenes.length}개 장면`);
   } catch (error) {
     setStatus(`오류: ${error.message}`);
@@ -456,15 +548,72 @@ stopButton.addEventListener("click", async () => {
   try {
     const tab = await getActiveGrokTab();
     await ensureContentScript(tab.id);
-    await sendToTab(tab.id, { type: "GROK_AUTO_STOP" });
+    await sendToTab(tab.id, { type: "GROK_AUTO_STOP_V2" });
     setStatus("중지 요청됨");
   } catch (error) {
     setStatus(`오류: ${error.message}`);
   }
 });
 
+async function sendRecoveryAction(type) {
+  const tab = await getActiveGrokTab();
+  await ensureContentScript(tab.id);
+  const response = await sendToTab(tab.id, { type: `${type}_V2` });
+  if (!response?.ok) {
+    throw new Error(response?.error || "복구 요청에 실패했습니다.");
+  }
+  await refreshRecoveryState();
+}
+
+$("#resumeSession").addEventListener("click", async () => {
+  try {
+    await sendRecoveryAction("GROK_AUTO_RESUME");
+    setStatus("저장된 지점부터 이어서 실행합니다.");
+  } catch (error) {
+    setStatus(`오류: ${error.message}`);
+  }
+});
+
+$("#retryScene").addEventListener("click", async () => {
+  try {
+    await sendRecoveryAction("GROK_AUTO_RETRY_SCENE");
+    setStatus("현재 장면을 처음부터 다시 시도합니다.");
+  } catch (error) {
+    setStatus(`오류: ${error.message}`);
+  }
+});
+
+$("#skipScene").addEventListener("click", async () => {
+  try {
+    await sendRecoveryAction("GROK_AUTO_SKIP_SCENE");
+    setStatus("현재 장면을 건너뛰고 다음 장면부터 실행합니다.");
+  } catch (error) {
+    setStatus(`오류: ${error.message}`);
+  }
+});
+
+$("#clearSession").addEventListener("click", async () => {
+  if (!confirm("저장된 진행기록을 삭제할까요? 삭제하면 이 작업은 이어서 실행할 수 없습니다.")) {
+    return;
+  }
+
+  try {
+    await sendRecoveryAction("GROK_AUTO_CLEAR_SESSION");
+    setStatus("저장된 진행기록을 삭제했습니다.");
+  } catch (error) {
+    setStatus(`오류: ${error.message}`);
+  }
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === "local" && changes[SESSION_KEY]) {
+    refreshRecoveryState().catch(() => {});
+  }
+});
+
 loadSettings()
   .then(bindAutosave)
+  .then(refreshRecoveryState)
   .catch((error) => {
     setStatus(`저장값 불러오기 실패: ${error.message}`);
   });

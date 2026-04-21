@@ -36,10 +36,25 @@
       </details>
 
       <section class="generation-settings" aria-label="생성 설정">
+        <div class="segmented wide" data-setting="sourceType">
+          <span>입력</span>
+          <button type="button" data-value="imagePrompt">이미지+프롬프트</button>
+          <button type="button" data-value="promptOnly">프롬프트만</button>
+        </div>
         <div class="segmented" data-setting="mode">
           <span>생성</span>
           <button type="button" data-value="image">이미지</button>
           <button type="button" data-value="video">비디오</button>
+        </div>
+        <div class="segmented image-only" data-setting="imageQuality">
+          <span>이미지</span>
+          <button type="button" data-value="speed">속도</button>
+          <button type="button" data-value="quality">품질</button>
+        </div>
+        <div class="segmented image-only" data-setting="imageDownloadScope">
+          <span>저장</span>
+          <button type="button" data-value="first">첫 번째</button>
+          <button type="button" data-value="all">전체</button>
         </div>
         <div class="segmented" data-setting="resolution">
           <span>해상도</span>
@@ -72,10 +87,21 @@
           </label>
         </div>
 
-        <label class="check">
+        <label class="check video-only">
           <input id="upscale" type="checkbox" checked>
           <span>생성 후 업스케일 시도</span>
         </label>
+
+        <section id="recoveryPanel" class="recovery-panel" hidden>
+          <strong>중단된 작업</strong>
+          <p id="recoveryText"></p>
+          <div class="recovery-buttons">
+            <button id="resumeSession" type="button" class="secondary">이어서</button>
+            <button id="retryScene" type="button" class="secondary">재시도</button>
+            <button id="skipScene" type="button" class="secondary">건너뛰기</button>
+            <button id="clearSession" type="button" class="secondary danger">기록 삭제</button>
+          </div>
+        </section>
 
         <div class="buttons">
           <button id="start">시작</button>
