@@ -1,6 +1,6 @@
 (() => {
-  const SCRIPT_VERSION = "2026-04-22-single-click-v23";
-  const DEBUG = true;
+  const SCRIPT_VERSION = "2026-04-23-single-click-v53";
+  const DEBUG = false;
 
   if (window.__grokImagineVideoAutomatorVersion === SCRIPT_VERSION) {
     return;
@@ -10,12 +10,12 @@
 
   const SESSION_KEY = "grokVideoAutoSession";
   const DOWNLOADS_KEY = "grokVideoAutoDownloadedUrls";
+  const SEEN_RESULT_CARD_ATTR = "data-grok-auto-seen-result";
   const IMAGINE_URL = "https://grok.com/imagine";
   const DEFAULT_GENERATION = {
     sourceType: "imagePrompt",
     mode: "video",
     imageQuality: "speed",
-    imageDownloadScope: "first",
     resolution: "480p",
     duration: "6s",
     aspectRatio: "16:9"
@@ -52,11 +52,23 @@
     return chrome.storage.local.remove(key);
   }
 
+  function sessionPayload(payload) {
+    return {
+      ...payload,
+      scenes: (payload.scenes || []).map((scene) => ({
+        ...scene,
+        image: scene.image
+          ? { id: scene.image.id, name: scene.image.name, type: scene.image.type }
+          : undefined
+      }))
+    };
+  }
+
   async function saveSession(payload, nextIndex, active = true, extra = {}) {
     await storageSet(SESSION_KEY, {
       active,
       nextIndex,
-      payload,
+      payload: sessionPayload(payload),
       ...extra,
       updatedAt: Date.now()
     });
@@ -88,12 +100,12 @@
 
   function status(text) {
     console.log(`[Grok Auto] ${text}`);
-    chrome.runtime.sendMessage({ type: "GROK_AUTO_STATUS", text }).catch(() => {});
+    const statusRunning = running && !/^(All done:|Stopped:|Stop requested\.)/.test(text);
+    chrome.runtime.sendMessage({ type: "GROK_AUTO_STATUS", text, running: statusRunning }).catch(() => {});
     renderOverlay(text);
   }
 
   function debug(label, data = {}) {
-    if (!DEBUG) return;
     const safeData = { ...data };
     if (safeData.prompt) safeData.prompt = String(safeData.prompt).slice(0, 120);
     if (safeData.text) safeData.text = String(safeData.text).slice(0, 160);
@@ -116,7 +128,7 @@
       url: location.href,
       ...safeData
     };
-    console.log(`[Grok Auto Debug] ${label}: ${JSON.stringify(safeData)}`);
+    if (DEBUG) console.log(`[Grok Auto Debug] ${label}: ${JSON.stringify(safeData)}`);
   }
 
   function debugSummary() {
@@ -129,7 +141,8 @@
       `editorText: ${String(snapshot.editorText || snapshot.latestEditorText || "").slice(0, 180)}`,
       `submit: ${JSON.stringify(snapshot.submitButton || { disabled: snapshot.submitDisabled, aria: snapshot.submitAria })}`,
       `promptEcho: ${snapshot.promptEcho}`,
-      `currentImages: ${snapshot.currentImages}`
+      `currentImages: ${snapshot.currentImages}`,
+      snapshot.detailCandidates ? `detailCandidates: ${JSON.stringify(snapshot.detailCandidates).slice(0, 1200)}` : ""
     ].join("\n");
   }
 
@@ -215,11 +228,28 @@
     const searchRoot = root?.isConnected || root === document ? root : document;
     const candidates = [
       ...searchRoot.querySelectorAll(
-        ".query-bar button[type='submit'][aria-label='\uC81C\uCD9C'], .query-bar button[type='submit'][aria-label='Submit'], .query-bar button[type='submit'], button[type='submit'][aria-label='\uC81C\uCD9C'], button[type='submit'][aria-label='Submit']"
+        [
+          ".query-bar button[type='submit'][aria-label='\uC81C\uCD9C']",
+          ".query-bar button[type='submit'][aria-label='Submit']",
+          ".query-bar button[type='submit']",
+          ".query-bar button[aria-label='\uC81C\uCD9C']",
+          ".query-bar button[aria-label='Submit']",
+          ".query-bar button[aria-label='Send']",
+          "button[type='submit'][aria-label='\uC81C\uCD9C']",
+          "button[type='submit'][aria-label='Submit']"
+        ].join(", ")
       )
     ]
       .filter(visible)
-      .filter((button) => !enabledOnly || !button.disabled);
+      .filter((button) => {
+        if (!enabledOnly) return true;
+        if (button.disabled || button.getAttribute("aria-disabled") === "true") return false;
+        const label = normalize(button.getAttribute("aria-label"));
+        const text = normalize(button.innerText || button.textContent);
+        if (button.type === "submit" || /제출|submit|send/i.test(`${label} ${text}`)) return true;
+        if (button.closest("[role='menu'], [role='listbox'], [data-radix-popper-content-wrapper]")) return false;
+        return false;
+      });
 
     return candidates[0] || null;
   }
@@ -251,12 +281,15 @@
   function promptWasSubmitted(prompt, editor, requirePromptEcho = false) {
     if (promptAppearsOutsideEditor(prompt)) return true;
     if (requirePromptEcho) return false;
+    const expected = normalize(prompt).slice(0, 60);
+    const latestEditor = findPromptEditor();
+    const latestText = promptEditorText(latestEditor);
+    if (onImagineHome() && expected && latestText.includes(expected)) return false;
     if (!editor?.isConnected) {
-      const latestEditor = findPromptEditor();
       return latestEditor && promptIsEmpty(latestEditor);
     }
     const text = promptEditorText(editor);
-    return !text || text !== normalize(prompt);
+    return !text;
   }
 
   function promptIsEmpty(editor = findPromptEditor()) {
@@ -410,6 +443,34 @@
     return true;
   }
 
+  function clickAt(el, xRatio = 0.5, yRatio = 0.5) {
+    if (!el) return false;
+    el.scrollIntoView({ block: "center", inline: "center" });
+    const rect = el.getBoundingClientRect();
+    const x = Math.max(1, Math.min(window.innerWidth - 1, rect.left + rect.width * xRatio));
+    const y = Math.max(1, Math.min(window.innerHeight - 1, rect.top + rect.height * yRatio));
+    const common = { bubbles: true, cancelable: true, clientX: x, clientY: y };
+    const target = document.elementFromPoint(x, y) || el;
+    target.dispatchEvent(new PointerEvent("pointerover", { ...common, pointerId: 1, pointerType: "mouse" }));
+    target.dispatchEvent(new PointerEvent("pointerenter", { ...common, pointerId: 1, pointerType: "mouse" }));
+    target.dispatchEvent(new PointerEvent("pointerdown", { ...common, pointerId: 1, pointerType: "mouse", buttons: 1 }));
+    target.dispatchEvent(new MouseEvent("mouseover", common));
+    target.dispatchEvent(new MouseEvent("mouseenter", common));
+    target.dispatchEvent(new MouseEvent("mousedown", common));
+    target.dispatchEvent(new PointerEvent("pointerup", { ...common, pointerId: 1, pointerType: "mouse" }));
+    target.dispatchEvent(new MouseEvent("mouseup", common));
+    target.dispatchEvent(new MouseEvent("click", common));
+    if (typeof target.click === "function") target.click();
+    return true;
+  }
+
+  async function closeOpenMenus() {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
+    document.dispatchEvent(new KeyboardEvent("keyup", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
+    if (document.activeElement && typeof document.activeElement.blur === "function") document.activeElement.blur();
+    await sleep(250);
+  }
+
   async function waitFor(predicate, timeoutMs, label) {
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
@@ -539,6 +600,46 @@
     }
   }
 
+  function findOptionButton(optionTexts, root = document) {
+    const options = optionTexts.map(normalize);
+    return [...root.querySelectorAll("button, [role='radio'], [role='option'], [role='menuitem']")]
+      .filter(visible)
+      .find((button) => {
+        const text = normalize(button.innerText || button.textContent);
+        const label = normalize(button.getAttribute("aria-label"));
+        const value = normalize(`${text} ${label}`);
+        return options.some((option) => value === option || value.includes(option));
+      }) || null;
+  }
+
+  async function chooseAspectRatio(aspectRatio) {
+    const wanted = [aspectRatio];
+    const queryBar = document.querySelector(".query-bar") || document;
+    const trigger =
+      queryBar.querySelector("button[aria-label='\uC885\uD6A1\uBE44'], button[aria-label='Aspect ratio']") ||
+      [...queryBar.querySelectorAll("button")]
+        .filter(visible)
+        .find((button) => /(?:^|\s)(?:16:9|9:16|2:3|3:2|1:1)(?:\s|$)/.test(normalize(button.innerText || button.textContent)));
+    if (trigger) {
+      click(trigger);
+      await sleep(300);
+      const menuOption = findOptionButton(wanted);
+      if (menuOption) {
+        click(menuOption);
+        await sleep(300);
+      }
+      await closeOpenMenus();
+      return;
+    }
+
+    await chooseRadio(
+      ["\uBE44\uC728", "\uD654\uBA74 \uBE44\uC728", "\uAC00\uB85C\uC138\uB85C \uBE44\uC728", "aspect ratio"],
+      wanted,
+      400
+    );
+    await closeOpenMenus();
+  }
+
   async function ensureGenerationSettings(settings = DEFAULT_GENERATION) {
     const generation = { ...DEFAULT_GENERATION, ...(settings || {}) };
 
@@ -548,11 +649,7 @@
       500
     );
 
-    await chooseRadio(
-      ["\uBE44\uC728", "\uD654\uBA74 \uBE44\uC728", "\uAC00\uB85C\uC138\uB85C \uBE44\uC728", "aspect ratio"],
-      [generation.aspectRatio],
-      400
-    );
+    await chooseAspectRatio(generation.aspectRatio);
 
     if (generation.mode !== "video") {
       await chooseRadio(
@@ -562,6 +659,7 @@
           : ["\uC18D\uB3C4", "speed"],
         400
       );
+      await closeOpenMenus();
       return;
     }
 
@@ -576,6 +674,7 @@
       [generation.duration],
       400
     );
+    await closeOpenMenus();
   }
 
   async function ensureDefaultSettings() {
@@ -604,7 +703,7 @@
   }
 
   function downloadableImageUrl(url = "") {
-    return /^https?:/i.test(url) && /\/generated\/|preview_image|assets\.grok\.com\/users|imagine-public\.x\.ai/i.test(url);
+    return /^https?:/i.test(url) && /\/generated\/|assets\.grok\.com\/users|imagine-public\.x\.ai/i.test(url);
   }
 
   function imageUrlLooksLikeAsset(url = "") {
@@ -617,36 +716,86 @@
     return match?.[2] || "";
   }
 
+  function firstSrcsetUrl(value = "") {
+    return String(value || "")
+      .split(",")
+      .map((entry) => entry.trim().split(/\s+/)[0])
+      .find(Boolean) || "";
+  }
+
   function imageLikeUrlFromElement(el) {
     if (!el) return "";
     const tag = el.tagName?.toLowerCase();
     if (tag === "img") return el.currentSrc || el.src || "";
-    if (tag === "source") return el.srcset?.split(/\s+/)[0] || el.src || "";
+    if (tag === "source") return firstSrcsetUrl(el.srcset) || el.src || "";
+    if (tag === "picture") {
+      const img = el.querySelector("img");
+      const source = el.querySelector("source[srcset]");
+      return imageLikeUrlFromElement(img) || imageLikeUrlFromElement(source);
+    }
     if (tag === "a") return el.href || "";
     return cssBackgroundUrl(el);
   }
 
+  function ignoredImageContext(el) {
+    if (!el) return false;
+    if (el.closest(".query-bar, form, [contenteditable='true'], #grok-auto-overlay")) return true;
+    if (el.closest("nav, aside, [role='navigation'], [aria-label='Sidebar']")) return true;
+    if (el.closest("button[aria-label='\uC800\uC7A5\uB428'], button[aria-label='Saved']")) return true;
+    return false;
+  }
+
+  function imageUrlLooksPreviewOnly(url = "") {
+    return /\/preview_image\.(?:png|jpe?g|webp)(?:[?#]|$)/i.test(url) || /[?&]cache=1(?:&|$)/i.test(url);
+  }
+
+  function cardLooksLargeEnoughForDirectPreview(card = {}) {
+    const width = card.naturalWidth || card.renderedWidth || 0;
+    const height = card.naturalHeight || card.renderedHeight || 0;
+    return Math.min(width, height) >= 180 && width * height >= 120_000;
+  }
+
   function imageUrlLooksGenerated(url = "") {
-    return /\/generated\/|preview_image|assets\.grok\.com\/users|imagine-public\.x\.ai|twimg\.com|xai|grok/i.test(url);
+    return /\/generated\/|assets\.grok\.com\/users|imagine-public\.x\.ai/i.test(url);
+  }
+
+  function inlineImageUrlLooksResult(url = "") {
+    return /^data:image\/(?:png|jpe?g|webp)[;,]/i.test(url);
   }
 
   function imageItemLooksFinal(item) {
     if (!item?.url) return false;
-    if (/^blob:|^data:image\//i.test(item.url)) return false;
+    if (imageUrlLooksPreviewOnly(item.url)) return false;
+    const isInlineResult = inlineImageUrlLooksResult(item.url);
+    if (/^blob:/i.test(item.url)) return false;
+    if (/^data:image\//i.test(item.url) && !isInlineResult) return false;
     if (item.tag === "video") return false;
     if (/loading|skeleton|placeholder|shimmer/i.test(`${item.className} ${item.cardClass}`)) return false;
 
     if (item.tag === "img") {
       if (!item.complete) return false;
       if (item.naturalWidth && item.naturalHeight) {
-        if (Math.min(item.naturalWidth, item.naturalHeight) < 256) return false;
-        if (item.naturalWidth * item.naturalHeight < 180_000) return false;
+        if (isInlineResult) {
+          const renderedArea = (item.renderedWidth || 0) * (item.renderedHeight || 0);
+          const naturalArea = item.naturalWidth * item.naturalHeight;
+          const largeEnough =
+            Math.min(item.naturalWidth, item.naturalHeight) >= 300 ||
+            item.renderedWidth >= 480 ||
+            item.renderedHeight >= 270 ||
+            naturalArea >= 150_000 ||
+            renderedArea >= 120_000;
+          if (!largeEnough) return false;
+        } else {
+          if (Math.min(item.naturalWidth, item.naturalHeight) < 512) return false;
+          if (item.naturalWidth * item.naturalHeight < 500_000) return false;
+        }
       }
-    } else if (Math.min(item.renderedWidth || 0, item.renderedHeight || 0) < 180) {
+      if ((item.renderedWidth || 0) < 240 || (item.renderedHeight || 0) < 160) return false;
+    } else if (Math.min(item.renderedWidth || 0, item.renderedHeight || 0) < 512) {
       return false;
     }
 
-    return imageUrlLooksGenerated(item.url) || (item.tag === "img" && imageUrlLooksLikeAsset(item.url));
+    return isInlineResult || imageUrlLooksGenerated(item.url) || (item.tag === "img" && imageUrlLooksLikeAsset(item.url));
   }
 
   function currentImageItems() {
@@ -659,7 +808,6 @@
           "img",
           "source[srcset]",
           "a[href*='/generated/']",
-          "a[href*='preview_image']",
           "a[href$='.png']",
           "a[href$='.jpg']",
           "a[href$='.jpeg']",
@@ -703,12 +851,18 @@
         };
       })
       .filter((item) => {
+        if (ignoredImageContext(item.img) || ignoredImageContext(item.card)) return false;
         if (!item.url) return false;
+        if (imageUrlLooksPreviewOnly(item.url)) return false;
         if (seen.has(item.key)) return false;
         seen.add(item.key);
         if (/profile-picture|pfp/i.test(item.url)) return false;
         if (item.area < 10_000 && !/generated image/i.test(item.alt)) return false;
-        return (/generated image/i.test(item.alt) || imageUrlLooksGenerated(item.url)) && imageItemLooksFinal(item);
+        return (
+          /generated image/i.test(item.alt) ||
+          imageUrlLooksGenerated(item.url) ||
+          inlineImageUrlLooksResult(item.url)
+        ) && imageItemLooksFinal(item);
       })
       .sort((a, b) => {
         const aDownloadable = downloadableImageUrl(a.url) ? 1 : 0;
@@ -764,9 +918,42 @@
       }));
   }
 
-  function currentNewImageItems(previousUrls = "") {
+  function elementHasSeenMarker(el, marker) {
+    if (!el || !marker || typeof el.getAttribute !== "function") return false;
+    return el.getAttribute(SEEN_RESULT_CARD_ATTR) === marker;
+  }
+
+  function resultCardHasSeenMarker(card, marker) {
+    if (!card || !marker) return false;
+    return [card.root, card.card, card.img, card.media, card.clickTarget].some((el) => elementHasSeenMarker(el, marker));
+  }
+
+  function markResultCard(card, marker) {
+    if (!card || !marker) return;
+    [card.root, card.card, card.img, card.media, card.clickTarget]
+      .filter(Boolean)
+      .forEach((el) => {
+        if (typeof el.setAttribute === "function") el.setAttribute(SEEN_RESULT_CARD_ATTR, marker);
+      });
+  }
+
+  function markExistingImageResultCards(marker) {
+    const cards = resultImageCards();
+    cards.forEach((card) => markResultCard(card, marker));
+    debug("marked existing image result cards", { marker, count: cards.length });
+    return marker;
+  }
+
+  function unmarkedResultImageCards(marker = "") {
+    const cards = resultImageCards();
+    return marker ? cards.filter((card) => !resultCardHasSeenMarker(card, marker)) : cards;
+  }
+
+  function currentNewImageItems(previousUrls = "", seenMarker = "") {
     const previous = previousUrlSet(previousUrls);
-    return currentImageItems().filter((item) => !previous.has(item.key) && !previous.has(item.url));
+    return currentImageItems().filter(
+      (item) => !previous.has(item.key) && !previous.has(item.url) && !resultCardHasSeenMarker(item, seenMarker)
+    );
   }
 
   function currentImageUrls() {
@@ -776,6 +963,69 @@
   function currentImageUrl(previousUrls = "") {
     const images = currentNewImageItems(previousUrls);
     return images[0]?.url || "";
+  }
+
+  function directImageItemFromCard(card, index = 0, previousUrls = "") {
+    const url = card?.url || imageLikeUrlFromElement(card?.img || card?.media);
+    if (!url || /^detail:/i.test(url)) return null;
+    if (imageUrlLooksPreviewOnly(url) && !cardLooksLargeEnoughForDirectPreview(card)) return null;
+    if (!downloadableImageUrl(url) && !inlineImageUrlLooksResult(url)) return null;
+    if (card.naturalWidth && card.naturalHeight) {
+      if (inlineImageUrlLooksResult(url)) {
+        const renderedArea = (card.renderedWidth || 0) * (card.renderedHeight || 0);
+        const naturalArea = card.naturalWidth * card.naturalHeight;
+        const largeEnough =
+          Math.min(card.naturalWidth, card.naturalHeight) >= 300 ||
+          card.renderedWidth >= 480 ||
+          card.renderedHeight >= 270 ||
+          naturalArea >= 150_000 ||
+          renderedArea >= 120_000;
+        if (!largeEnough) return null;
+      } else {
+        const isLargePreview = imageUrlLooksPreviewOnly(url) && cardLooksLargeEnoughForDirectPreview(card);
+        if (!isLargePreview && Math.min(card.naturalWidth, card.naturalHeight) < 512) return null;
+        if (!isLargePreview && card.naturalWidth * card.naturalHeight < 500_000) return null;
+      }
+    }
+    const previous = previousUrlSet(previousUrls);
+    if (previous.has(url) || previous.has(mediaUrlKey(url))) return null;
+    return {
+      ...card,
+      index,
+      url,
+      key: mediaUrlKey(url),
+      detailOnly: false
+    };
+  }
+
+  function detailImageItemFromGeneratedItem(item, index = 0) {
+    return {
+      ...item,
+      detailOnly: true,
+      index,
+      sourceUrl: item.url,
+      root: item.card || item.root,
+      media: item.img || item.media,
+      clickTarget: item.card || item.img || item.media || item.root
+    };
+  }
+
+  function detailCardKey(card = {}) {
+    const url = card.url || imageLikeUrlFromElement(card.img || card.media);
+    if (url) return `url:${mediaUrlKey(url)}`;
+    return [
+      "box",
+      Math.round(card.left || 0),
+      Math.round(card.top || 0),
+      Math.round(card.renderedWidth || 0),
+      Math.round(card.renderedHeight || 0),
+      Math.round(card.naturalWidth || 0),
+      Math.round(card.naturalHeight || 0)
+    ].join(":");
+  }
+
+  function currentDetailCardKeys() {
+    return resultImageCards().map(detailCardKey);
   }
 
   function imageExtensionForUrl(url = "") {
@@ -811,19 +1061,47 @@
     });
   }
 
-  async function waitForGeneratedImages(previousUrl, settings = DEFAULT_GENERATION) {
+  async function waitForGeneratedImages(previousUrl, settings = DEFAULT_GENERATION, previousDetailKeys = [], seenMarker = "") {
     const started = Date.now();
     let lastReport = 0;
     let lastSignature = "";
     let stableSince = 0;
     let lastItems = [];
+    let firstSeenItems = [];
+    let firstSeenAt = 0;
+    const previousDetailSet = new Set(previousDetailKeys);
 
     while (Date.now() - started < WAIT.generate) {
       assertNotStopped();
 
-      const items = currentNewImageItems(previousUrl);
+      const items = currentNewImageItems(previousUrl, seenMarker);
       const detailCards = resultImageCards();
-      const signature = items.map((item) => item.key).join("|");
+      const candidateDetailCards = unmarkedResultImageCards(seenMarker);
+      const newDetailCards = candidateDetailCards.filter((card) => !previousDetailSet.has(detailCardKey(card)));
+      const signature = [
+        ...items.map((item) => item.key),
+        ...newDetailCards.map((card) => detailCardKey(card))
+      ].join("|");
+
+      if (items.length && !firstSeenItems.length) {
+        firstSeenItems = items.filter((item) => {
+          if (imageUrlLooksPreviewOnly(item.url) && !cardLooksLargeEnoughForDirectPreview(item)) return false;
+          const width = item.naturalWidth || item.renderedWidth || 0;
+          const height = item.naturalHeight || item.renderedHeight || 0;
+          return Math.min(width, height) >= 240 && width * height >= 180_000;
+        });
+        if (!firstSeenItems.length) continue;
+        firstSeenAt = Date.now();
+      }
+
+      if (firstSeenItems.length && Date.now() - firstSeenAt >= 2_000) {
+        const selected = firstSeenItems.slice(0, 1).map((item, index) => detailImageItemFromGeneratedItem(item, index));
+        const item = selected[0];
+        status(
+          `Image result appeared and was captured.\nAuto-saving: first image only.\nDetected URL images: ${firstSeenItems.length}.\nDownload method: detail page\nSaved image size: ${item.naturalWidth || Math.round(item.renderedWidth)}x${item.naturalHeight || Math.round(item.renderedHeight)}`
+        );
+        return selected;
+      }
 
       if (signature && signature !== lastSignature) {
         lastSignature = signature;
@@ -831,86 +1109,81 @@
         lastItems = items;
       }
 
-      const requiredStable = settings.imageDownloadScope === "all" ? 10_000 : 8_000;
+      const requiredStable = 12_000;
       if (lastSignature && Date.now() - stableSince >= requiredStable) {
         await sleep(WAIT.afterGenerate);
-        const latestItems = currentNewImageItems(previousUrl);
-        const maxImages =
-          settings.imageDownloadScope === "all" && settings.imageQuality === "speed" ? 4 : Infinity;
-        const directSelected =
-          settings.imageDownloadScope === "all"
-            ? latestItems.slice(0, maxImages)
-            : latestItems.slice(0, 1);
+        const latestItems = currentNewImageItems(previousUrl, seenMarker);
+        const latestDetailCards = unmarkedResultImageCards(seenMarker).filter(
+          (card) => !previousDetailSet.has(detailCardKey(card))
+        );
+        const directSelected = (latestItems.length ? latestItems : lastItems).slice(0, 1);
         const selected =
-          detailCards.length
-            ? directSelected.map((item, index) => ({ ...item, detailOnly: true, index, url: `detail:${index}` }))
-            : directSelected;
+          directSelected.length && detailCards.length
+            ? directSelected.map((item, index) => detailImageItemFromGeneratedItem(item, index))
+            : directSelected.length
+              ? directSelected.map((item, index) => detailImageItemFromGeneratedItem(item, index))
+              : latestDetailCards.slice(0, 1).map((card, index) => detailImageItemFromGeneratedItem(card, index));
         if (!selected.length) {
           lastSignature = "";
           lastItems = [];
           continue;
         }
+        const savedItem = directSelected[0] || selected[0];
+        const method = "detail page";
         status(
-          `Image results are ready.\nDetected images: ${latestItems.length}, downloading: ${selected.length}${Number.isFinite(maxImages) ? ` (speed cap: ${maxImages})` : ""}\nDownload method: ${detailCards.length ? "detail button" : "direct URL"}\nFirst image: ${directSelected[0].naturalWidth || Math.round(directSelected[0].renderedWidth)}x${directSelected[0].naturalHeight || Math.round(directSelected[0].renderedHeight)}`
+          `Image results are ready.\nAuto-saving: first image only.\nDetected URL images: ${latestItems.length}, new detail cards: ${latestDetailCards.length}.\nOther results stay on the page for manual download.\nDownload method: ${method}\nSaved image size: ${savedItem.naturalWidth || Math.round(savedItem.renderedWidth)}x${savedItem.naturalHeight || Math.round(savedItem.renderedHeight)}`
         );
         return selected;
       }
 
-      if (!items.length && detailCards.length && Date.now() - started > 4_000) {
-        const maxImages =
-          settings.imageDownloadScope === "all" && settings.imageQuality === "speed" ? 4 : Infinity;
-        const selected =
-          settings.imageDownloadScope === "all"
-            ? detailCards.slice(0, maxImages).map((_, index) => ({ detailOnly: true, index, url: `detail:${index}` }))
-            : [{ detailOnly: true, index: 0, url: "detail:0" }];
+        if (!items.length && newDetailCards.length && Date.now() - started > 4_000) {
+        const selected = [{ detailOnly: true, index: 0, url: "detail:0" }];
         status(
-          `Image result cards are visible. Using detail download fallback.\nDetected cards: ${detailCards.length}, downloading: ${selected.length}${Number.isFinite(maxImages) ? ` (speed cap: ${maxImages})` : ""}`
+          `Image result cards are visible. Auto-saving the first new image via detail download (1/${newDetailCards.length}).\nOther results stay on the page for manual download.`
         );
         debug("using detail download fallback", {
           cards: detailCards.length,
+          newCards: newDetailCards.length,
           first: {
-            url: detailCards[0].url,
-            naturalWidth: detailCards[0].naturalWidth,
-            naturalHeight: detailCards[0].naturalHeight,
-            renderedWidth: Math.round(detailCards[0].renderedWidth || 0),
-            renderedHeight: Math.round(detailCards[0].renderedHeight || 0)
+            url: newDetailCards[0].url,
+            naturalWidth: newDetailCards[0].naturalWidth,
+            naturalHeight: newDetailCards[0].naturalHeight,
+            renderedWidth: Math.round(newDetailCards[0].renderedWidth || 0),
+            renderedHeight: Math.round(newDetailCards[0].renderedHeight || 0)
           }
         });
         await sleep(WAIT.afterGenerate);
-        return selected;
+        return [detailImageItemFromGeneratedItem(newDetailCards[0], 0)];
       }
 
       if (Date.now() - lastReport > 10_000) {
         const previousCount = previousUrlSet(previousUrl).size;
-        if (!items.length && detailCards.length) {
-          const maxImages =
-            settings.imageDownloadScope === "all" && settings.imageQuality === "speed" ? 4 : Infinity;
-          const selected =
-            settings.imageDownloadScope === "all"
-              ? detailCards.slice(0, maxImages).map((_, index) => ({ detailOnly: true, index, url: `detail:${index}` }))
-              : [{ detailOnly: true, index: 0, url: "detail:0" }];
+        if (!items.length && newDetailCards.length) {
+          const selected = [{ detailOnly: true, index: 0, url: "detail:0" }];
           status(
-            `Image result cards are visible. Using detail download fallback.\nDetected cards: ${detailCards.length}, downloading: ${selected.length}${Number.isFinite(maxImages) ? ` (speed cap: ${maxImages})` : ""}`
+            `Image result cards are visible. Auto-saving the first new image via detail download (1/${newDetailCards.length}).\nOther results stay on the page for manual download.`
           );
           debug("using detail download fallback", {
             cards: detailCards.length,
+            newCards: newDetailCards.length,
             first: {
-              url: detailCards[0].url,
-              naturalWidth: detailCards[0].naturalWidth,
-              naturalHeight: detailCards[0].naturalHeight
+              url: newDetailCards[0].url,
+              naturalWidth: newDetailCards[0].naturalWidth,
+              naturalHeight: newDetailCards[0].naturalHeight
             }
           });
           await sleep(WAIT.afterGenerate);
-          return selected;
+          return [detailImageItemFromGeneratedItem(newDetailCards[0], 0)];
         }
         status(
-          `Waiting for image generation...\nDetected images: ${currentImageItems().length}, previous images: ${previousCount}, new images: ${items.length}`
+          `Waiting for image generation...\nDetected images: ${currentImageItems().length}, previous images: ${previousCount}, new images: ${items.length}\nDetail cards: ${detailCards.length}, new detail cards: ${newDetailCards.length}`
         );
         debug("image wait check", {
           detected: currentImageItems().length,
           previous: previousCount,
           newItems: items.length,
           detailCards: detailCards.length,
+          newDetailCards: newDetailCards.length,
           detailCardSummary: detailCards.length ? resultImageCardSummary() : undefined,
           raw: items.length ? undefined : rawImageCandidateSummary(),
           first: items[0]
@@ -936,6 +1209,7 @@
   function resultImageCards() {
     const imageCards = [...document.querySelectorAll("img")]
       .filter(visible)
+      .filter((img) => !ignoredImageContext(img))
       .map((img) => {
         const root =
           img.closest("[role='listitem']") ||
@@ -966,7 +1240,11 @@
         };
       })
       .filter((item) => {
+        if (ignoredImageContext(item.img) || ignoredImageContext(item.root) || ignoredImageContext(item.clickTarget)) {
+          return false;
+        }
         if (/profile-picture|pfp/i.test(item.url)) return false;
+        if (imageUrlLooksPreviewOnly(item.url) && !cardLooksLargeEnoughForDirectPreview(item)) return false;
         if (item.area < 30_000) return false;
         if (item.naturalWidth && item.naturalHeight && Math.min(item.naturalWidth, item.naturalHeight) < 180) {
           return false;
@@ -981,6 +1259,7 @@
 
     const visualCards = [...document.querySelectorAll("body *")]
       .filter(visible)
+      .filter((el) => !ignoredImageContext(el))
       .map((el) => {
         const rect = el.getBoundingClientRect();
         const media = el.matches("img, video, canvas, picture")
@@ -1015,7 +1294,7 @@
         if (aspect < 1.1 || aspect > 4.2) return false;
         if (text.length > 80) return false;
         if (el.matches("button, a, svg, input, textarea, [contenteditable='true']")) return false;
-        if (el.closest(".query-bar, #grok-auto-overlay, [contenteditable='true']")) return false;
+        if (ignoredImageContext(el)) return false;
         if (/sidebar|menu-button|radix|toolbar/i.test(String(el.className || ""))) return false;
         return Boolean(item.media || item.img || item.url || el.querySelector("button, svg"));
       });
@@ -1035,18 +1314,158 @@
       });
   }
 
+  function clickableResultTarget(card = {}) {
+    const start = card.img || card.media || card.clickTarget || card.root;
+    let el = start;
+    while (el && el !== document.body) {
+      if (ignoredImageContext(el)) return start;
+      const style = getComputedStyle(el);
+      const className = String(el.className || "");
+      if (
+        el.matches?.("a, button, [role='button'], [tabindex]") ||
+        style.cursor === "pointer" ||
+        /cursor-pointer|media-post-masonry-card|group\/media|group/i.test(className)
+      ) {
+        return el;
+      }
+      el = el.parentElement;
+    }
+    return card.root || start;
+  }
+
   function findDetailDownloadButton() {
-    return [...document.querySelectorAll("button[aria-label='\uB2E4\uC6B4\uB85C\uB4DC'], button[aria-label='Download']")]
+    const buttons = [...document.querySelectorAll("button[aria-label='\uB2E4\uC6B4\uB85C\uB4DC'], button[aria-label='Download']")]
       .filter(visible)
-      .find((button) => !button.disabled);
+      .filter((button) => !button.disabled)
+      .filter((button) => !button.closest(".query-bar, form, [contenteditable='true'], #grok-auto-overlay"));
+
+    return buttons.find((button) => {
+      const rect = button.getBoundingClientRect();
+      return rect.width >= 24 && rect.height >= 24 && rect.left > window.innerWidth * 0.45;
+    }) || buttons.at(-1) || null;
+  }
+
+  function detailImageFromElement(el) {
+    if (!el || !visible(el) || ignoredImageContext(el)) return null;
+    const rect = el.getBoundingClientRect();
+    let url = imageLikeUrlFromElement(el);
+    if (!url && el.tagName?.toLowerCase() === "canvas") {
+      try {
+        url = el.toDataURL("image/png");
+      } catch {
+        url = "";
+      }
+    }
+    if (!url || /^data:image\/svg/i.test(url)) return null;
+    if (!/^https?:|^blob:|^data:image\//i.test(url)) return null;
+    if (imageUrlLooksPreviewOnly(url) && rect.width * rect.height < 120_000) return null;
+    if (rect.width < 240 || rect.height < 160 || rect.width * rect.height < 120_000) return null;
+    return {
+      el,
+      tag: el.tagName?.toLowerCase() || "",
+      url,
+      naturalWidth: el.naturalWidth || 0,
+      naturalHeight: el.naturalHeight || 0,
+      renderedWidth: rect.width,
+      renderedHeight: rect.height,
+      area: rect.width * rect.height
+    };
+  }
+
+  function isImaginePostDetailPage() {
+    return /\/imagine\/post\//.test(location.pathname);
+  }
+
+  function findDetailArticleImage() {
+    if (!isImaginePostDetailPage()) return null;
+    const article = document.querySelector("article");
+    const images = [...(article || document).querySelectorAll("img[src^='data:image/'], img[class*='object-cover']")]
+      .map(detailImageFromElement)
+      .filter(Boolean)
+      .sort((a, b) => b.area - a.area);
+    return images[0] || null;
+  }
+
+  function findDetailMainImage() {
+    const articleImage = findDetailArticleImage();
+    if (articleImage) return articleImage;
+
+    const backgroundCandidates = [...document.querySelectorAll("body *")]
+      .filter(visible)
+      .filter((el) => cssBackgroundUrl(el));
+    const candidates = [
+      ...document.querySelectorAll("img, picture, source[srcset], a[href], canvas"),
+      ...backgroundCandidates
+    ];
+
+    const seen = new Set();
+    return candidates
+      .filter((el) => !ignoredImageContext(el))
+      .map((el) => {
+        const media =
+          el.tagName?.toLowerCase() === "source"
+            ? el.closest("picture")?.querySelector("img") || el.closest("picture") || el
+            : el;
+        const rect = (visible(media) ? media : el.parentElement || el).getBoundingClientRect();
+        let url = imageLikeUrlFromElement(el);
+        if (!url && el.tagName?.toLowerCase() === "canvas") {
+          try {
+            url = el.toDataURL("image/png");
+          } catch {
+            url = "";
+          }
+        }
+        return {
+          el,
+          tag: el.tagName?.toLowerCase() || "",
+          url,
+          naturalWidth: el.naturalWidth || media.naturalWidth || 0,
+          naturalHeight: el.naturalHeight || media.naturalHeight || 0,
+          renderedWidth: rect.width,
+          renderedHeight: rect.height,
+          area: rect.width * rect.height
+        };
+      })
+      .filter((item) => {
+        if (ignoredImageContext(item.el)) return false;
+        const key = mediaUrlKey(item.url);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        if (!item.url || /^data:image\/svg/i.test(item.url)) return false;
+        if (imageUrlLooksPreviewOnly(item.url) && !cardLooksLargeEnoughForDirectPreview(item)) return false;
+        if (/profile-picture|pfp/i.test(item.url)) return false;
+        if (!/^https?:|^blob:|^data:image\//i.test(item.url)) return false;
+        if (item.renderedWidth < 240 || item.renderedHeight < 160) return false;
+        if (item.area < 120_000) return false;
+        if (item.el.closest("button, nav, aside, [role='navigation']")) return false;
+        if (item.el.getBoundingClientRect().left < 220 && item.el.getBoundingClientRect().top < 120) return false;
+        if (item.naturalWidth && item.naturalHeight) {
+          if (Math.min(item.naturalWidth, item.naturalHeight) < 180) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const score = (item) => {
+          const generated = imageUrlLooksGenerated(item.url) || /^data:image\//i.test(item.url) || /^blob:/i.test(item.url) ? 1_000_000 : 0;
+          const naturalArea = item.naturalWidth * item.naturalHeight;
+          return generated + Math.max(item.area, naturalArea);
+        };
+        return score(b) - score(a);
+      })[0] || null;
   }
 
   async function openDetailDownloadButton(card) {
-    let button = findDetailDownloadButton();
-    if (button) return button;
+    if (isImaginePostDetailPage()) {
+      const existingDetailImage = findDetailMainImage();
+      if (existingDetailImage) return existingDetailImage;
+    }
 
-    const openTarget = card.clickTarget || card.img || card.media || card.root;
+    const openTarget = clickableResultTarget(card);
+    if (ignoredImageContext(openTarget)) {
+      throw new Error("The selected image target is inside the prompt bar or sidebar, so it is not a generated result card.");
+    }
     for (let attempt = 1; attempt <= 4; attempt += 1) {
+      const beforeUrl = location.href;
       debug("detail open attempt", {
         attempt,
         target: openTarget,
@@ -1054,23 +1473,58 @@
         targetClass: String(openTarget?.className || "").slice(0, 120),
         location: location.href
       });
-      click(openTarget);
-      button = await waitFor(() => findDetailDownloadButton(), attempt === 4 ? WAIT.page : 3_000, "detail download button").catch(
+      const targets = [
+        { el: openTarget, x: 0.5, y: 0.5 },
+        { el: card.root, x: 0.5, y: 0.5 },
+        { el: card.img || card.media, x: 0.5, y: 0.5 },
+        { el: openTarget, x: 0.9, y: 0.5 },
+        { el: openTarget, x: 0.92, y: 0.18 }
+      ].filter((target) => target.el);
+      const target = targets[Math.min(attempt - 1, targets.length - 1)];
+      clickAt(target.el, target.x, target.y);
+      if (/\/imagine\/saved(?:$|[/?#])/.test(location.href)) {
+        history.back();
+        await sleep(1000);
+        throw new Error("The selected target opened Grok Saved instead of the generated image detail. Retrying with stricter card filtering is required.");
+      }
+      const opened = await waitFor(
+        () => {
+          const onDetailPage = isImaginePostDetailPage();
+          const movedToDetail = onDetailPage || (location.href !== beforeUrl && /\/imagine\/(?!$|\?)/.test(location.pathname));
+          const detailImage = movedToDetail ? findDetailMainImage() : null;
+          const detailButton = movedToDetail ? findDetailDownloadButton() : null;
+          return detailImage || detailButton || null;
+        },
+        attempt === 4 ? WAIT.page : 3_000,
+        "detail image or download button"
+      ).catch(
         () => null
       );
-      if (button) return button;
+      if (opened) return opened;
       await sleep(400);
     }
 
-    throw new Error("detail download button timed out.");
+    throw new Error("detail image timed out.");
   }
 
-  async function downloadImageViaDetail(index, filename) {
-    const cards = await waitFor(() => {
-      const found = resultImageCards();
-      return found.length ? found : null;
-    }, WAIT.generate, "image result cards");
-    const card = cards[Math.min(index, cards.length - 1)];
+  async function downloadImageViaDetail(itemOrIndex, filename) {
+    const index = typeof itemOrIndex === "number" ? itemOrIndex : itemOrIndex?.index || 0;
+    if (isImaginePostDetailPage()) {
+      const existingDetailImage = await waitFor(() => findDetailMainImage(), 8_000, "current detail image").catch(() => null);
+      if (existingDetailImage?.url) {
+        const directFilename = filenameWithImageExtension(filename, existingDetailImage.url);
+        status(`Downloading displayed detail image directly...\n${directFilename}`);
+        await downloadMedia(existingDetailImage.url, directFilename);
+        return;
+      }
+    }
+
+    const card = typeof itemOrIndex === "object" && (itemOrIndex.root || itemOrIndex.clickTarget)
+      ? itemOrIndex
+      : await waitFor(() => {
+          const found = resultImageCards();
+          return found.length ? found[Math.min(index, found.length - 1)] : null;
+        }, WAIT.generate, "image result cards");
     if (!card) throw new Error("Could not find an image result card to open.");
 
     status(`Opening image ${index + 1} detail for download...`);
@@ -1079,43 +1533,37 @@
       filename,
       card: card.root,
       clickTarget: card.clickTarget || card.img || card.media || card.root,
-      imageUrl: card.url,
+      imageUrl: card.sourceUrl || card.url,
       naturalWidth: card.naturalWidth,
       naturalHeight: card.naturalHeight
     });
 
-    const button = await openDetailDownloadButton(card).catch(async (error) => {
-      const fallbackUrl = card.url || imageLikeUrlFromElement(card.img || card.media);
-      if (/^data:image\//i.test(fallbackUrl) || downloadableImageUrl(fallbackUrl)) {
-        const fallbackFilename = filenameWithImageExtension(filename, fallbackUrl);
-        status(`Detail did not open. Downloading image source directly...\n${fallbackFilename}`);
-        debug("detail open failed; falling back to direct image source", {
-          error: error.message,
-          filename: fallbackFilename,
-          url: fallbackUrl,
-          urlType: /^data:image\//i.test(fallbackUrl) ? "data-image" : "remote-image"
-        });
-        await downloadMedia(fallbackUrl, fallbackFilename);
-        return null;
-      }
-      throw error;
-    });
-    if (!button) return;
-    const watch = await chrome.runtime.sendMessage({
-      type: "GROK_AUTO_EXPECT_NATIVE_DOWNLOAD",
-      filename
-    });
-    if (!watch?.ok) throw new Error(watch?.error || "Could not start native download watch.");
+    const opened = await openDetailDownloadButton(card);
+    const button = opened instanceof Element ? opened : findDetailDownloadButton();
+    const detailImage = opened?.url
+      ? opened
+      : await waitFor(() => findDetailMainImage(), 8_000, "detail image for direct download").catch(() => null);
+    if (detailImage?.url) {
+      const directFilename = filenameWithImageExtension(filename, detailImage.url);
+      status(`Downloading displayed detail image directly...\n${directFilename}`);
+      await downloadMedia(detailImage.url, directFilename);
+      return;
+    }
 
-    status(`Clicking detail download...\n${filename}`);
-    click(button);
-    const response = await chrome.runtime.sendMessage({
-      type: "GROK_AUTO_WAIT_NATIVE_DOWNLOAD",
-      token: watch.token
+    debug("detail image source not found", {
+      button,
+      detailCandidates: rawImageCandidateSummary(10)
     });
-    if (!response?.ok) throw new Error(response?.error || "Native image download failed.");
 
-    await recordDownloadedUrl(`native:${filename}:${Date.now()}`, filename);
+    if (button) {
+      throw new Error(
+        "The Grok detail image was opened, but the displayed image source could not be read. " +
+        "Automation intentionally did not click Grok's download button because Chrome treats that as an untrusted synthetic click and may block it as a pop-up.\n" +
+        debugSummary()
+      );
+    }
+
+    throw new Error(`Could not find the detail download button or the displayed detail image.\n${debugSummary()}`);
   }
 
   async function waitForGeneratedImage(previousUrl) {
@@ -1134,7 +1582,31 @@
     return new File([bytes], image.name || "reference.png", { type: mime });
   }
 
+  async function resolveImagePayload(image) {
+    if (image?.dataUrl) return image;
+    if (!image?.id) throw new Error("Scene image is missing. Please restart from the side panel.");
+    const response = await chrome.runtime.sendMessage({
+      type: "GROK_AUTO_GET_IMAGE_PAYLOAD",
+      imageId: image.id
+    });
+    if (!response?.ok) throw new Error(response?.error || "Could not load the scene image payload.");
+    return response.image;
+  }
+
+  async function releaseImagePayload(image) {
+    if (!image?.id) return;
+    await chrome.runtime.sendMessage({
+      type: "GROK_AUTO_DELETE_IMAGE_PAYLOAD",
+      imageId: image.id
+    }).catch(() => {});
+  }
+
+  async function releasePayloadImages(payload, startIndex = 0) {
+    await Promise.all((payload?.scenes || []).slice(startIndex).map((scene) => releaseImagePayload(scene.image)));
+  }
+
   async function uploadImage(image) {
+    image = await resolveImagePayload(image);
     const input = await waitFor(
       () =>
         document.querySelector("form input[type='file'][accept*='image']") ||
@@ -1287,7 +1759,7 @@
           const latestRoot = editorRoot(latestEditor);
           return (
             findSubmitButton(true, latestRoot) ||
-            (!requirePromptEcho ? findSubmitButton(true, document) : null)
+            findSubmitButton(true, document)
           );
         },
         WAIT.upload,
@@ -1484,6 +1956,16 @@
       throw new Error(response?.error || "Chrome download request failed.");
     }
 
+    const requestedFolder = filename.includes("/") ? filename.split("/")[0] : "";
+    if (requestedFolder && response.actualFilename) {
+      const actual = response.actualFilename.replace(/\\/g, "/");
+      if (!actual.includes(`/${requestedFolder}/`)) {
+        throw new Error(
+          `Chrome saved the file outside the requested folder.\nRequested: ${filename}\nActual: ${response.actualFilename}`
+        );
+      }
+    }
+
     await recordDownloadedUrl(url, filename);
   }
 
@@ -1521,6 +2003,7 @@
     let currentPhase = resumeState?.phase || "start";
     let currentPreviousUrl = resumeState?.previousUrl || "";
     let currentFinalMediaUrl = resumeState?.finalMediaUrl || "";
+    let currentPreviousDetailKeys = resumeState?.previousDetailKeys || [];
 
     try {
       for (let i = startAt; i < scenes.length; i += 1) {
@@ -1531,10 +2014,13 @@
             ? resumeState
             : null;
         let previousUrl = state?.previousUrl || "";
+        let previousDetailKeys = state?.previousDetailKeys || [];
         let phase = state?.phase || "start";
         let finalMediaUrl = state?.finalMediaUrl || "";
+        let previousDetailMarker = "";
         currentPhase = phase;
         currentPreviousUrl = previousUrl;
+        currentPreviousDetailKeys = previousDetailKeys;
         currentFinalMediaUrl = finalMediaUrl;
 
         await saveSession(payload, i, true, { phase, previousUrl, finalMediaUrl });
@@ -1554,8 +2040,12 @@
           await ensureGenerationSettings(generation);
 
           previousUrl = generation.mode === "video" ? currentVideoUrl(false) : currentImageUrls();
+          previousDetailKeys = generation.mode === "image" ? currentDetailCardKeys() : [];
+          previousDetailMarker =
+            generation.mode === "image" ? markExistingImageResultCards(`${payload.runId}:${i}:${Date.now()}`) : "";
           currentPreviousUrl = previousUrl;
-          await saveSession(payload, i, true, { phase: "editing", previousUrl });
+          currentPreviousDetailKeys = previousDetailKeys;
+          await saveSession(payload, i, true, { phase: "editing", previousUrl, previousDetailKeys });
           currentPhase = "editing";
 
           if (scene.image) {
@@ -1570,14 +2060,14 @@
           const promptEditor = await setPrompt(scene.prompt);
           phase = "submitting";
           currentPhase = phase;
-          await saveSession(payload, i, true, { phase, previousUrl });
+          await saveSession(payload, i, true, { phase, previousUrl, previousDetailKeys });
           await submitPrompt(promptEditor, {
             prompt: scene.prompt,
             requirePromptEcho: generation.mode !== "video"
           });
           phase = "submitted";
           currentPhase = phase;
-          await saveSession(payload, i, true, { phase, previousUrl });
+          await saveSession(payload, i, true, { phase, previousUrl, previousDetailKeys });
         }
 
         const isVideo = generation.mode === "video";
@@ -1585,7 +2075,11 @@
         let imageItems = [];
         if (retryingPendingDownload) {
           status(`[${i + 1}/${total}] Download was pending. Retrying download...`);
-          if (!isVideo) imageItems = [{ detailOnly: true, index: 0, url: "detail:0" }];
+          if (!isVideo) {
+            imageItems = await waitForGeneratedImages(previousUrl, generation, previousDetailKeys, previousDetailMarker);
+            finalMediaUrl = imageItems[0]?.url || "";
+            currentFinalMediaUrl = mediaUrlKey(finalMediaUrl);
+          }
         } else {
           status(`[${i + 1}/${total}] Waiting for ${isVideo ? "video" : "image"} generation...`);
 
@@ -1599,7 +2093,7 @@
               status("720p video was generated directly. Skipping upscale and downloading.");
             }
           } else {
-            imageItems = await waitForGeneratedImages(previousUrl, generation);
+            imageItems = await waitForGeneratedImages(previousUrl, generation, previousDetailKeys, previousDetailMarker);
             finalMediaUrl = imageItems[0]?.url || "";
             currentFinalMediaUrl = mediaUrlKey(finalMediaUrl);
           }
@@ -1612,6 +2106,7 @@
         await saveSession(payload, i, true, {
           phase: currentPhase,
           previousUrl,
+          previousDetailKeys,
           finalMediaUrl: currentFinalMediaUrl
         });
         await loadDownloadedUrls();
@@ -1625,22 +2120,24 @@
             await downloadMedia(finalMediaUrl, filename);
           }
         } else {
-          if (!imageItems.length) imageItems = await waitForGeneratedImages(previousUrl, generation);
+          if (!imageItems.length) {
+            imageItems = await waitForGeneratedImages(previousUrl, generation, previousDetailKeys, previousDetailMarker);
+          }
           for (let imageIndex = 0; imageIndex < imageItems.length; imageIndex += 1) {
             const item = imageItems[imageIndex];
             const suffix = imageItems.length > 1 ? `_${String(imageIndex + 1).padStart(2, "0")}` : "";
             const filename = `${baseFilename}${suffix}.${item.detailOnly ? "png" : imageExtensionForUrl(item.url)}`;
-            status(`[${i + 1}/${total}] Downloading image ${imageIndex + 1}/${imageItems.length}...\n${filename}`);
-            if (retryingPendingDownload && downloadedUrls.has(mediaUrlKey(item.url))) {
+            status(`[${i + 1}/${total}] Downloading first image result...\n${filename}`);
+            const itemDownloadKey = mediaUrlKey(item.sourceUrl || item.url);
+            if (retryingPendingDownload && downloadedUrls.has(itemDownloadKey)) {
               status(`[${i + 1}/${total}] Image ${imageIndex + 1} was already downloaded.`);
-            } else if (item.detailOnly) {
-              await downloadImageViaDetail(item.index || imageIndex, filename);
             } else {
-              await downloadMedia(item.url, filename);
+              await downloadImageViaDetail(item, filename);
             }
           }
         }
 
+        await releaseImagePayload(scene.image);
         await saveSession(payload, i + 1, true, { phase: "ready", previousUrl: "" });
         status(`[${i + 1}/${total}] Done.`);
 
@@ -1655,11 +2152,13 @@
       const summary = debugSummary();
       console.warn(`[Grok Auto Debug Summary]\n${summary}`);
       if (stopRequested) {
+        await releasePayloadImages(payload, currentIndex);
         await clearSession();
       } else {
         await saveSession(payload, currentIndex, true, {
           phase: currentPhase,
           previousUrl: currentPreviousUrl,
+          previousDetailKeys: currentPreviousDetailKeys,
           finalMediaUrl: currentFinalMediaUrl,
           error: {
             message: error.message,
@@ -1678,16 +2177,13 @@
   }
 
   async function resumeIfNeeded() {
-    if (running || startRequested) return;
     const session = await storageGet(SESSION_KEY).catch(() => null);
     if (!session?.active || !session.payload?.scenes?.length) return;
     if (session.nextIndex >= session.payload.scenes.length) {
       await clearSession();
       return;
     }
-
-    status(`Resuming queue from scene ${session.nextIndex + 1}/${session.payload.scenes.length}...`);
-    runQueue(session.payload, session.nextIndex, session).catch(() => {});
+    status("Saved session found. It will not auto-resume after refresh. Use Resume, Retry, or Clear Session in the side panel.");
   }
 
   async function recoverableSession() {
@@ -1714,13 +2210,13 @@
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === "GROK_AUTO_PING_V2") {
-      sendResponse({ ok: true, version: SCRIPT_VERSION });
+      sendResponse({ ok: true, version: SCRIPT_VERSION, running: running || startRequested });
       return false;
     }
 
     if (message?.type === "GROK_AUTO_STOP_V2") {
       stopRequested = true;
-      clearSession().catch(() => {});
+      recoverableSession().then((session) => releasePayloadImages(session.payload, session.nextIndex)).catch(() => {}).then(() => clearSession());
       status("Stop requested. The current step will stop shortly.");
       sendResponse({ ok: true });
       return false;
@@ -1749,6 +2245,7 @@
     if (message?.type === "GROK_AUTO_SKIP_SCENE_V2") {
       recoverableSession()
         .then(async (session) => {
+          await releaseImagePayload(session.payload.scenes[session.nextIndex]?.image);
           const nextIndex = session.nextIndex + 1;
           if (nextIndex >= session.payload.scenes.length) {
             await clearSession();
@@ -1768,7 +2265,10 @@
     }
 
     if (message?.type === "GROK_AUTO_CLEAR_SESSION_V2") {
-      clearSession()
+      recoverableSession()
+        .then((session) => releasePayloadImages(session.payload))
+        .catch(() => {})
+        .then(() => clearSession())
         .then(() => {
           stopRequested = true;
           status("Saved session was cleared.");

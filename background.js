@@ -13,32 +13,92 @@ chrome.action.onClicked.addListener(async (tab) => {
 });
 
 const pendingFilenames = new Map();
+const pendingExtensionDownloads = new Map();
 const nativeDownloadWatches = new Map();
+const IMAGE_PAYLOAD_PREFIX = "grokVideoAutoImage:";
+const BACKGROUND_VERSION = "2026-04-22-direct-image-v4";
 
-function findNativeWatch(item) {
+async function pruneImagePayloads() {
+  const stored = await chrome.storage.local.get(null);
+  const now = Date.now();
+  const expired = Object.entries(stored)
+    .filter(([key, item]) => key.startsWith(IMAGE_PAYLOAD_PREFIX) && now - (item?.createdAt || 0) > 6 * 60 * 60 * 1000)
+    .map(([key]) => key);
+  if (expired.length) await chrome.storage.local.remove(expired);
+}
+
+function validFilename(value) {
+  return typeof value === "string" && value.trim() && value.trim() !== "()";
+}
+
+function mapSet(map, key, value) {
+  if (key && value) map.set(key, value);
+}
+
+function mapDelete(map, key) {
+  if (key) map.delete(key);
+}
+
+function looksLikeGrokDownload(item = {}) {
+  const values = [item.url, item.finalUrl, item.referrer].filter(Boolean).join(" ");
+  return /grok\.com|assets\.grok\.com|imagine-public\.x\.ai/i.test(values);
+}
+
+function findNativeWatch(item = {}) {
+  if (!looksLikeGrokDownload(item)) return null;
   const createdAt = item.startTime ? Date.parse(item.startTime) : Date.now();
   return [...nativeDownloadWatches.entries()].find(([, watch]) => {
     if (watch.downloadId) return false;
-    return createdAt >= watch.startedAt - 2000;
+    return createdAt >= watch.startedAt - 1000 && createdAt <= watch.expiresAt;
+  });
+}
+
+function findPendingExtensionDownload(item = {}) {
+  const createdAt = item.startTime ? Date.parse(item.startTime) : Date.now();
+  return [...pendingExtensionDownloads.entries()].find(([, pending]) => {
+    if (pending.downloadId) return false;
+    return createdAt >= pending.startedAt - 1000 && createdAt <= pending.expiresAt;
   });
 }
 
 chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
-  let filename = pendingFilenames.get(item.id) || pendingFilenames.get(item.url) || pendingFilenames.get(item.finalUrl);
-  if (!filename) {
+  if (item.byExtensionId && item.byExtensionId !== chrome.runtime.id) {
+    suggest();
+    return;
+  }
+
+  let filename =
+    pendingFilenames.get(item.id) ||
+    pendingFilenames.get(item.url) ||
+    pendingFilenames.get(item.finalUrl);
+
+  if (!filename && item.byExtensionId === chrome.runtime.id) {
+    const pendingDownload = findPendingExtensionDownload(item);
+    if (pendingDownload) {
+      const [token, pending] = pendingDownload;
+      filename = pending.filename;
+      pending.downloadId = item.id;
+      mapSet(pendingFilenames, item.id, filename);
+      mapSet(pendingFilenames, item.url, filename);
+      mapSet(pendingFilenames, item.finalUrl, filename);
+      pendingExtensionDownloads.set(token, pending);
+    }
+  }
+
+  if (!filename && !item.byExtensionId) {
     const nativeWatch = findNativeWatch(item);
     if (nativeWatch) {
       const [token, watch] = nativeWatch;
       filename = watch.filename;
       watch.downloadId = item.id;
-      pendingFilenames.set(item.id, filename);
-      pendingFilenames.set(item.url, filename);
-      if (item.finalUrl) pendingFilenames.set(item.finalUrl, filename);
+      mapSet(pendingFilenames, item.id, filename);
+      mapSet(pendingFilenames, item.url, filename);
+      mapSet(pendingFilenames, item.finalUrl, filename);
       nativeDownloadWatches.set(token, watch);
     }
   }
 
-  if (filename) {
+  if (validFilename(filename)) {
     suggest({ filename, conflictAction: "uniquify" });
     return;
   }
@@ -47,24 +107,89 @@ chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
 });
 
 chrome.downloads.onCreated.addListener((item) => {
+  if (item.byExtensionId === chrome.runtime.id) {
+    const pendingDownload = findPendingExtensionDownload(item);
+    if (pendingDownload) {
+      const [token, pending] = pendingDownload;
+      pending.downloadId = item.id;
+      mapSet(pendingFilenames, item.id, pending.filename);
+      mapSet(pendingFilenames, item.url, pending.filename);
+      mapSet(pendingFilenames, item.finalUrl, pending.filename);
+      pendingExtensionDownloads.set(token, pending);
+    }
+  }
+
   const nativeWatch = findNativeWatch(item);
   if (!nativeWatch) return;
   const [token, watch] = nativeWatch;
   watch.downloadId = item.id;
-  pendingFilenames.set(item.id, watch.filename);
-  if (item.url) pendingFilenames.set(item.url, watch.filename);
-  if (item.finalUrl) pendingFilenames.set(item.finalUrl, watch.filename);
+  mapSet(pendingFilenames, item.id, watch.filename);
+  mapSet(pendingFilenames, item.url, watch.filename);
+  mapSet(pendingFilenames, item.finalUrl, watch.filename);
   nativeDownloadWatches.set(token, watch);
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "GROK_AUTO_BACKGROUND_INFO") {
+    sendResponse({
+      ok: true,
+      version: BACKGROUND_VERSION,
+      manifestVersion: chrome.runtime.getManifest().version
+    });
+    return false;
+  }
+
+  if (message?.type === "GROK_AUTO_STORE_IMAGE_PAYLOAD") {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    pruneImagePayloads()
+      .then(() => chrome.storage.local.set({
+        [`${IMAGE_PAYLOAD_PREFIX}${id}`]: {
+          id,
+          name: message.image?.name || "reference.png",
+          type: message.image?.type || "image/png",
+          dataUrl: message.image?.dataUrl || "",
+          createdAt: Date.now()
+        }
+      }))
+      .then(() => sendResponse({ ok: true, imageId: id }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.type === "GROK_AUTO_GET_IMAGE_PAYLOAD") {
+    chrome.storage.local.get(`${IMAGE_PAYLOAD_PREFIX}${message.imageId}`)
+      .then((result) => {
+        const image = result[`${IMAGE_PAYLOAD_PREFIX}${message.imageId}`];
+        if (!image?.dataUrl) {
+          sendResponse({ ok: false, error: "Image payload is no longer available. Please restart from the side panel." });
+          return;
+        }
+        sendResponse({ ok: true, image });
+      })
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.type === "GROK_AUTO_DELETE_IMAGE_PAYLOAD") {
+    chrome.storage.local.remove(`${IMAGE_PAYLOAD_PREFIX}${message.imageId}`)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   if (message?.type === "GROK_AUTO_EXPECT_NATIVE_DOWNLOAD") {
+    if (!validFilename(message.filename)) {
+      sendResponse({ ok: false, error: "Invalid native download filename." });
+      return false;
+    }
+
     const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     nativeDownloadWatches.set(token, {
       token,
       filename: message.filename,
       startedAt: Date.now(),
-      downloadId: null
+      downloadId: null,
+      expiresAt: Date.now() + 45_000
     });
     sendResponse({ ok: true, token });
     return false;
@@ -77,21 +202,40 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
 
-    const timeout = setTimeout(() => {
-      chrome.downloads.onChanged.removeListener(onChanged);
-      nativeDownloadWatches.delete(message.token);
-      sendResponse({ ok: false, error: "Native download completion timed out." });
-    }, 10 * 60 * 1000);
+    const noDownloadTimeout = setTimeout(() => {
+      if (!watch.downloadId) finish(false, { error: "Native download was not created. It may have been blocked by Chrome pop-up protection." });
+    }, 8_000);
+    const timeout = setTimeout(() => finish(false, { error: "Native download completion timed out." }), 10 * 60 * 1000);
     let done = false;
 
     function finish(ok, payload = {}) {
       if (done) return;
       done = true;
+      clearTimeout(noDownloadTimeout);
       clearTimeout(timeout);
       chrome.downloads.onChanged.removeListener(onChanged);
       nativeDownloadWatches.delete(message.token);
-      if (watch.downloadId) pendingFilenames.delete(watch.downloadId);
-      sendResponse({ ok, downloadId: watch.downloadId, ...payload });
+      if (watch.downloadId) mapDelete(pendingFilenames, watch.downloadId);
+      if (!watch.downloadId) {
+        sendResponse({
+          ok,
+          downloadId: null,
+          requestedFilename: watch.filename,
+          actualFilename: "",
+          ...payload
+        });
+        return;
+      }
+      chrome.downloads.search({ id: watch.downloadId }, (items) => {
+        const item = items?.[0];
+        sendResponse({
+          ok,
+          downloadId: watch.downloadId,
+          requestedFilename: watch.filename,
+          actualFilename: item?.filename || "",
+          ...payload
+        });
+      });
     }
 
     function onChanged(delta) {
@@ -115,7 +259,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
-  pendingFilenames.set(message.url, message.filename);
+  if (!validFilename(message.filename)) {
+    sendResponse({ ok: false, error: "Invalid download filename." });
+    return false;
+  }
+
+  const pendingToken = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  pendingExtensionDownloads.set(pendingToken, {
+    token: pendingToken,
+    filename: message.filename,
+    startedAt: Date.now(),
+    expiresAt: Date.now() + 45_000,
+    downloadId: null
+  });
+  mapSet(pendingFilenames, message.url, message.filename);
 
   chrome.downloads.download(
     {
@@ -126,17 +283,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     },
     (downloadId) => {
       if (chrome.runtime.lastError) {
-        pendingFilenames.delete(message.url);
+        pendingExtensionDownloads.delete(pendingToken);
+        mapDelete(pendingFilenames, message.url);
         sendResponse({ ok: false, error: chrome.runtime.lastError.message });
         return;
       }
 
-      pendingFilenames.set(downloadId, message.filename);
+      const pending = pendingExtensionDownloads.get(pendingToken);
+      if (pending) {
+        pending.downloadId = downloadId;
+        pendingExtensionDownloads.set(pendingToken, pending);
+      }
+      mapSet(pendingFilenames, downloadId, message.filename);
 
       const timeout = setTimeout(() => {
         chrome.downloads.onChanged.removeListener(onChanged);
-        pendingFilenames.delete(downloadId);
-        pendingFilenames.delete(message.url);
+        pendingExtensionDownloads.delete(pendingToken);
+        mapDelete(pendingFilenames, downloadId);
+        mapDelete(pendingFilenames, message.url);
         sendResponse({ ok: false, error: "Download completion timed out.", downloadId });
       }, 10 * 60 * 1000);
 
@@ -145,20 +309,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
 
-        if (delta.state.current === "complete") {
+        function finish(ok, payload = {}) {
           clearTimeout(timeout);
           chrome.downloads.onChanged.removeListener(onChanged);
-          pendingFilenames.delete(downloadId);
-          pendingFilenames.delete(message.url);
-          sendResponse({ ok: true, downloadId });
+          pendingExtensionDownloads.delete(pendingToken);
+          mapDelete(pendingFilenames, downloadId);
+          mapDelete(pendingFilenames, message.url);
+          chrome.downloads.search({ id: downloadId }, (items) => {
+            const item = items?.[0];
+            sendResponse({
+              ok,
+              downloadId,
+              requestedFilename: message.filename,
+              actualFilename: item?.filename || "",
+              ...payload
+            });
+          });
+        }
+
+        if (delta.state.current === "complete") {
+          finish(true);
         }
 
         if (delta.state.current === "interrupted") {
-          clearTimeout(timeout);
-          chrome.downloads.onChanged.removeListener(onChanged);
-          pendingFilenames.delete(downloadId);
-          pendingFilenames.delete(message.url);
-          sendResponse({ ok: false, error: "Download was interrupted.", downloadId });
+          finish(false, { error: "Download was interrupted." });
         }
       }
 

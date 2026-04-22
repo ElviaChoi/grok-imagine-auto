@@ -4,11 +4,14 @@ const STORAGE_KEY = "grokVideoAutoSettings";
 const SESSION_KEY = "grokVideoAutoSession";
 const DEFAULT_SCENE_COUNT = 3;
 const TARGET_SCENE_COUNT = 20;
+const DEFAULT_PREFIX_BY_MODE = {
+  video: "grok-video",
+  image: "grok-image"
+};
 const DEFAULT_SETTINGS = {
   sourceType: "imagePrompt",
   mode: "video",
   imageQuality: "speed",
-  imageDownloadScope: "first",
   resolution: "480p",
   duration: "6s",
   aspectRatio: "16:9"
@@ -22,9 +25,37 @@ const recoveryPanel = $("#recoveryPanel");
 const recoveryText = $("#recoveryText");
 
 let saveTimer = 0;
+let currentMode = DEFAULT_SETTINGS.mode;
+let liveAutomation = false;
 
 function setStatus(text) {
   statusEl.textContent = text;
+}
+
+async function showRuntimeInfo() {
+  const manifestVersion = chrome.runtime.getManifest().version;
+  const background = await chrome.runtime.sendMessage({ type: "GROK_AUTO_BACKGROUND_INFO" }).catch(() => null);
+  const backgroundVersion = background?.version || "background not responding";
+  setStatus(`Ready. Extension ${manifestVersion}, background ${backgroundVersion}`);
+}
+
+function defaultPrefixForMode(mode = getSegmentedValue("mode")) {
+  return DEFAULT_PREFIX_BY_MODE[mode] || DEFAULT_PREFIX_BY_MODE.video;
+}
+
+function builtInPrefix(value) {
+  return Object.values(DEFAULT_PREFIX_BY_MODE).includes(String(value || "").trim());
+}
+
+function syncPrefixForMode(previousMode = currentMode) {
+  const prefix = $("#prefix");
+  if (!prefix) return;
+  const currentValue = prefix.value.trim();
+  const previousDefault = defaultPrefixForMode(previousMode);
+  const nextDefault = defaultPrefixForMode();
+  if (!currentValue || currentValue === previousDefault || builtInPrefix(currentValue)) {
+    prefix.value = nextDefault;
+  }
 }
 
 function positiveInteger(value, fallback = 1) {
@@ -48,6 +79,16 @@ function formatSession(session) {
   return `${sceneNumber}/${total}번 장면에서 멈춰 있습니다. 단계: ${phase}${error}`;
 }
 
+async function currentTabAutomationRunning() {
+  try {
+    const tab = await getActiveGrokTab();
+    const response = await sendToTab(tab.id, { type: "GROK_AUTO_PING_V2" });
+    return Boolean(response?.running);
+  } catch {
+    return false;
+  }
+}
+
 async function refreshRecoveryState() {
   const session = await chrome.storage.local.get(SESSION_KEY).then((result) => result[SESSION_KEY]);
   const hasRecoverableSession = Boolean(
@@ -56,8 +97,9 @@ async function refreshRecoveryState() {
       session.nextIndex < session.payload.scenes.length
   );
 
-  recoveryPanel.hidden = !hasRecoverableSession;
-  if (hasRecoverableSession) {
+  const tabIsRunning = hasRecoverableSession ? await currentTabAutomationRunning() : false;
+  recoveryPanel.hidden = !hasRecoverableSession || liveAutomation || tabIsRunning;
+  if (hasRecoverableSession && !recoveryPanel.hidden) {
     recoveryText.textContent = formatSession(session);
   }
 }
@@ -174,11 +216,16 @@ function clearPromptValues() {
 function setSegmentedValue(name, value) {
   const group = document.querySelector(`.segmented[data-setting="${name}"]`);
   if (!group) return;
+  const previousMode = currentMode;
   group.querySelectorAll("button[data-value]").forEach((button) => {
     button.classList.toggle("active", button.dataset.value === value);
   });
   if (name === "sourceType") updateSourceTypeUi();
-  if (name === "mode") updateModeUi();
+  if (name === "mode") {
+    currentMode = value;
+    updateModeUi();
+    syncPrefixForMode(previousMode);
+  }
 }
 
 function getSegmentedValue(name) {
@@ -193,7 +240,6 @@ function getGenerationSettings() {
     sourceType: getSegmentedValue("sourceType"),
     mode: getSegmentedValue("mode"),
     imageQuality: getSegmentedValue("imageQuality"),
-    imageDownloadScope: getSegmentedValue("imageDownloadScope"),
     resolution: getSegmentedValue("resolution"),
     duration: getSegmentedValue("duration"),
     aspectRatio: getSegmentedValue("aspectRatio")
@@ -380,12 +426,14 @@ async function loadSettings() {
     addScene(prompts[i] || "");
   }
 
-  $("#prefix").value = settings.prefix || "grok-video";
+  const generation = { ...DEFAULT_SETTINGS, ...(settings.generation || {}) };
+  currentMode = generation.mode;
+  $("#prefix").value = settings.prefix || defaultPrefixForMode(generation.mode);
   $("#startIndex").value = settings.startIndex || 1;
   $("#upscale").checked = settings.upscale !== false;
 
-  const generation = { ...DEFAULT_SETTINGS, ...(settings.generation || {}) };
   Object.entries(generation).forEach(([name, value]) => setSegmentedValue(name, value));
+  syncPrefixForMode(null);
   updateModeUi();
 }
 
@@ -465,6 +513,21 @@ async function ensureContentScript(tabId) {
   }
 }
 
+async function storeImagePayload(file) {
+  const response = await chrome.runtime.sendMessage({
+    type: "GROK_AUTO_STORE_IMAGE_PAYLOAD",
+    image: {
+      name: file.name,
+      type: file.type || "image/png",
+      dataUrl: await readFileAsDataUrl(file)
+    }
+  });
+  if (!response?.ok) {
+    throw new Error(response?.error || "이미지를 임시 저장하지 못했습니다.");
+  }
+  return response.imageId;
+}
+
 async function buildScenes() {
   const rows = [...sceneList.querySelectorAll(".scene")];
   const scenes = [];
@@ -490,9 +553,9 @@ async function buildScenes() {
 
     if (file && requiresImage) {
       scene.image = {
+        id: await storeImagePayload(file),
         name: file.name,
-        type: file.type || "image/png",
-        dataUrl: await readFileAsDataUrl(file)
+        type: file.type || "image/png"
       };
     }
 
@@ -512,6 +575,7 @@ async function buildScenes() {
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type === "GROK_AUTO_STATUS") {
+    liveAutomation = Boolean(message.running);
     setStatus(message.text);
     refreshRecoveryState().catch(() => {});
   }
@@ -520,6 +584,8 @@ chrome.runtime.onMessage.addListener((message) => {
 startButton.addEventListener("click", async () => {
   try {
     startButton.disabled = true;
+    liveAutomation = true;
+    recoveryPanel.hidden = true;
     setStatus("준비 중...");
     await saveSettings();
 
@@ -529,7 +595,7 @@ startButton.addEventListener("click", async () => {
     const scenes = await buildScenes();
     const payload = {
       scenes,
-      prefix: $("#prefix").value.trim() || "grok-video",
+      prefix: $("#prefix").value.trim() || defaultPrefixForMode(),
       startIndex: positiveInteger($("#startIndex").value),
       upscale: $("#upscale").checked,
       generation: getGenerationSettings()
@@ -538,6 +604,7 @@ startButton.addEventListener("click", async () => {
     await sendToTab(tab.id, { type: "GROK_AUTO_START_V2", payload });
     setStatus(`시작됨: ${scenes.length}개 장면`);
   } catch (error) {
+    liveAutomation = false;
     setStatus(`오류: ${error.message}`);
   } finally {
     startButton.disabled = false;
@@ -549,6 +616,7 @@ stopButton.addEventListener("click", async () => {
     const tab = await getActiveGrokTab();
     await ensureContentScript(tab.id);
     await sendToTab(tab.id, { type: "GROK_AUTO_STOP_V2" });
+    liveAutomation = false;
     setStatus("중지 요청됨");
   } catch (error) {
     setStatus(`오류: ${error.message}`);
@@ -562,6 +630,8 @@ async function sendRecoveryAction(type) {
   if (!response?.ok) {
     throw new Error(response?.error || "복구 요청에 실패했습니다.");
   }
+  liveAutomation = true;
+  recoveryPanel.hidden = true;
   await refreshRecoveryState();
 }
 
@@ -614,6 +684,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 loadSettings()
   .then(bindAutosave)
   .then(refreshRecoveryState)
+  .then(showRuntimeInfo)
   .catch((error) => {
     setStatus(`저장값 불러오기 실패: ${error.message}`);
   });
