@@ -90,8 +90,11 @@
         }
       }
       if ((item.renderedWidth || 0) < 240 || (item.renderedHeight || 0) < 160) return false;
-    } else if (Math.min(item.renderedWidth || 0, item.renderedHeight || 0) < 512) {
-      return false;
+    } else {
+      const renderedWidth = item.renderedWidth || 0;
+      const renderedHeight = item.renderedHeight || 0;
+      const renderedArea = renderedWidth * renderedHeight;
+      if (Math.min(renderedWidth, renderedHeight) < 180 || renderedArea < 120_000) return false;
     }
 
     return isInlineResult || imageUrlLooksGenerated(item.url) || (item.tag === "img" && imageUrlLooksLikeAsset(item.url));

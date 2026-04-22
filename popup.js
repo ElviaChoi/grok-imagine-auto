@@ -506,7 +506,7 @@ async function ensureContentScript(tabId) {
   } catch {
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ["content.js"]
+      files: ["content-shared.js", "content-dom-utils.js", "content-media-utils.js", "content.js"]
     });
     await sendToTab(tabId, { type: "GROK_AUTO_PING_V2" });
   }

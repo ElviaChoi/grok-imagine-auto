@@ -969,8 +969,8 @@
         const aspect = item.renderedWidth / Math.max(item.renderedHeight, 1);
         if (item.left < 220 || item.top < 70) return false;
         if (item.renderedWidth < 160 || item.renderedHeight < 80) return false;
-        if (item.renderedWidth > 760 || item.renderedHeight > 430) return false;
-        if (aspect < 1.1 || aspect > 4.2) return false;
+        if (item.renderedWidth > 760 || item.renderedHeight > 760) return false;
+        if (aspect < 0.42 || aspect > 4.2) return false;
         if (text.length > 80) return false;
         if (el.matches("button, a, svg, input, textarea, [contenteditable='true']")) return false;
         if (ignoredImageContext(el)) return false;
