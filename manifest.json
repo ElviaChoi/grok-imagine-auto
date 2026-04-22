@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Grok Imagine Video Automator",
-  "description": "Upload one image, run multiple Grok Imagine video prompts, upscale, and download numbered videos.",
+  "description": "Run multiple Grok Imagine prompts and save numbered image/video results.",
   "version": "0.1.10",
   "permissions": [
     "activeTab",
