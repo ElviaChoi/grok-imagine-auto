@@ -203,6 +203,11 @@ h1 {
   grid-template-columns: 42px minmax(0, 1fr) minmax(0, 1fr);
 }
 
+.segmented.aspect-options {
+  grid-column: 1 / -1;
+  grid-template-columns: 42px repeat(5, minmax(0, 1fr));
+}
+
 .segmented.hidden {
   display: none;
 }
