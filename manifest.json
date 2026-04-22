@@ -38,6 +38,7 @@
       ],
       "js": [
         "content-shared.js",
+        "content-media-utils.js",
         "content.js"
       ],
       "run_at": "document_idle"
