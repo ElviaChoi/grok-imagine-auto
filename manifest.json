@@ -38,6 +38,7 @@
       ],
       "js": [
         "content-shared.js",
+        "content-dom-utils.js",
         "content-media-utils.js",
         "content.js"
       ],
