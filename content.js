@@ -100,7 +100,7 @@
 
   function status(text) {
     console.log(`[Grok Auto] ${text}`);
-    const statusRunning = running && !/^(All done:|Stopped:|Stop requested\.)/.test(text);
+    const statusRunning = running && !/^(All done:|Stopped:|Stop requested\.|완료:|중지됨:|중지 요청됨)/.test(text);
     chrome.runtime.sendMessage({ type: "GROK_AUTO_STATUS", text, running: statusRunning }).catch(() => {});
     renderOverlay(text);
   }
@@ -173,7 +173,7 @@
 
   function assertNotStopped() {
     if (stopRequested) {
-      throw new Error("User stopped the automation.");
+      throw new Error("사용자가 작업을 중지했습니다.");
     }
   }
 
@@ -479,7 +479,7 @@
       if (result) return result;
       await sleep(500);
     }
-    throw new Error(`${label} timed out.`);
+    throw new Error(`${label} 대기 시간이 초과되었습니다.`);
   }
 
   function allClickables() {
@@ -1098,7 +1098,7 @@
         const selected = firstSeenItems.slice(0, 1).map((item, index) => detailImageItemFromGeneratedItem(item, index));
         const item = selected[0];
         status(
-          `Image result appeared and was captured.\nAuto-saving: first image only.\nDetected URL images: ${firstSeenItems.length}.\nDownload method: detail page\nSaved image size: ${item.naturalWidth || Math.round(item.renderedWidth)}x${item.naturalHeight || Math.round(item.renderedHeight)}`
+          `이미지 결과를 찾았습니다.\n첫 번째 이미지만 자동 저장합니다.\n감지된 이미지: ${firstSeenItems.length}개 · 저장 크기: ${item.naturalWidth || Math.round(item.renderedWidth)}x${item.naturalHeight || Math.round(item.renderedHeight)}`
         );
         return selected;
       }
@@ -1131,7 +1131,7 @@
         const savedItem = directSelected[0] || selected[0];
         const method = "detail page";
         status(
-          `Image results are ready.\nAuto-saving: first image only.\nDetected URL images: ${latestItems.length}, new detail cards: ${latestDetailCards.length}.\nOther results stay on the page for manual download.\nDownload method: ${method}\nSaved image size: ${savedItem.naturalWidth || Math.round(savedItem.renderedWidth)}x${savedItem.naturalHeight || Math.round(savedItem.renderedHeight)}`
+          `이미지 결과가 준비되었습니다.\n첫 번째 이미지만 자동 저장합니다.\n나머지 결과는 Grok 화면에서 직접 저장할 수 있습니다.\n저장 크기: ${savedItem.naturalWidth || Math.round(savedItem.renderedWidth)}x${savedItem.naturalHeight || Math.round(savedItem.renderedHeight)}`
         );
         return selected;
       }
@@ -1139,7 +1139,7 @@
         if (!items.length && newDetailCards.length && Date.now() - started > 4_000) {
         const selected = [{ detailOnly: true, index: 0, url: "detail:0" }];
         status(
-          `Image result cards are visible. Auto-saving the first new image via detail download (1/${newDetailCards.length}).\nOther results stay on the page for manual download.`
+          `이미지 결과 카드가 보입니다.\n첫 번째 결과를 자동 저장합니다. (1/${newDetailCards.length})\n나머지는 Grok 화면에서 직접 저장할 수 있습니다.`
         );
         debug("using detail download fallback", {
           cards: detailCards.length,
@@ -1161,7 +1161,7 @@
         if (!items.length && newDetailCards.length) {
           const selected = [{ detailOnly: true, index: 0, url: "detail:0" }];
           status(
-            `Image result cards are visible. Auto-saving the first new image via detail download (1/${newDetailCards.length}).\nOther results stay on the page for manual download.`
+            `이미지 결과 카드가 보입니다.\n첫 번째 결과를 자동 저장합니다. (1/${newDetailCards.length})\n나머지는 Grok 화면에서 직접 저장할 수 있습니다.`
           );
           debug("using detail download fallback", {
             cards: detailCards.length,
@@ -1176,7 +1176,7 @@
           return [detailImageItemFromGeneratedItem(newDetailCards[0], 0)];
         }
         status(
-          `Waiting for image generation...\nDetected images: ${currentImageItems().length}, previous images: ${previousCount}, new images: ${items.length}\nDetail cards: ${detailCards.length}, new detail cards: ${newDetailCards.length}`
+          `이미지 생성 결과를 기다리는 중입니다.\n새 이미지: ${items.length}개 · 결과 카드: ${newDetailCards.length}개`
         );
         debug("image wait check", {
           detected: currentImageItems().length,
@@ -1513,7 +1513,7 @@
       const existingDetailImage = await waitFor(() => findDetailMainImage(), 8_000, "current detail image").catch(() => null);
       if (existingDetailImage?.url) {
         const directFilename = filenameWithImageExtension(filename, existingDetailImage.url);
-        status(`Downloading displayed detail image directly...\n${directFilename}`);
+        status(`이미지를 저장하는 중입니다.\n${directFilename}`);
         await downloadMedia(existingDetailImage.url, directFilename);
         return;
       }
@@ -1527,7 +1527,7 @@
         }, WAIT.generate, "image result cards");
     if (!card) throw new Error("Could not find an image result card to open.");
 
-    status(`Opening image ${index + 1} detail for download...`);
+    status(`저장할 이미지 화면을 여는 중입니다. (${index + 1}번째 결과)`);
     debug("detail download opening card", {
       index,
       filename,
@@ -1545,7 +1545,7 @@
       : await waitFor(() => findDetailMainImage(), 8_000, "detail image for direct download").catch(() => null);
     if (detailImage?.url) {
       const directFilename = filenameWithImageExtension(filename, detailImage.url);
-      status(`Downloading displayed detail image directly...\n${directFilename}`);
+      status(`이미지를 저장하는 중입니다.\n${directFilename}`);
       await downloadMedia(detailImage.url, directFilename);
       return;
     }
@@ -1584,12 +1584,12 @@
 
   async function resolveImagePayload(image) {
     if (image?.dataUrl) return image;
-    if (!image?.id) throw new Error("Scene image is missing. Please restart from the side panel.");
+    if (!image?.id) throw new Error("장면 이미지가 없습니다. 사이드 패널에서 다시 시작해 주세요.");
     const response = await chrome.runtime.sendMessage({
       type: "GROK_AUTO_GET_IMAGE_PAYLOAD",
       imageId: image.id
     });
-    if (!response?.ok) throw new Error(response?.error || "Could not load the scene image payload.");
+    if (!response?.ok) throw new Error(response?.error || "장면 이미지를 불러오지 못했습니다.");
     return response.image;
   }
 
@@ -1683,9 +1683,7 @@
       5_000,
       "prompt submit readiness"
     );
-    status(
-      `Prompt is ready (${method}).\nEditor chars: ${promptEditorText(editor).length}, submit disabled: ${submit.disabled}`
-    );
+    status(`프롬프트 입력이 준비되었습니다.\n입력 길이: ${promptEditorText(editor).length}자`);
     debug("setPrompt ready", {
       method,
       url: location.href,
@@ -1708,7 +1706,7 @@
       throw new Error("Prompt editor is empty before submit.");
     }
 
-    status("Submitting prompt...");
+    status("프롬프트를 제출하는 중입니다.");
     debug("submitPrompt start", {
       url: location.href,
       onImagineHome: onImagineHome(),
@@ -1823,7 +1821,7 @@
       15_000,
       "generation submit"
     );
-    status("Prompt was submitted.");
+    status("프롬프트 제출이 완료되었습니다.");
   }
 
   function videoUrl(video) {
@@ -1876,7 +1874,7 @@
 
   async function waitForGeneratedVideo(previousUrl) {
     const url = await waitForStableVideo(false, previousUrl, WAIT.generate, "video generation");
-    status("Video is playable. Waiting briefly before next step.");
+    status("비디오 결과가 준비되었습니다. 저장 준비 중입니다.");
     await sleep(WAIT.afterGenerate);
     return url;
   }
@@ -1890,7 +1888,7 @@
     if (!button) {
       const more = findOpenMoreButton();
       if (more) {
-        status("Opening more options and looking for Upscale...");
+        status("고화질 변환 버튼을 찾는 중입니다.");
         click(more);
         button = await waitFor(
           () =>
@@ -1903,21 +1901,21 @@
     }
 
     if (!button) {
-      status("Upscale button was not found. Downloading current SD video.");
+      status("고화질 변환 버튼을 찾지 못했습니다. 현재 화질로 저장합니다.");
       return before;
     }
 
-    status("Clicking Upscale...");
+    status("고화질 변환을 시작합니다.");
     click(button);
-    status("Upscale requested. Waiting for HD video.");
+    status("고화질 비디오가 완성되기를 기다리는 중입니다.");
 
     try {
       const url = await waitForStableVideo(true, before, WAIT.upscale, "upscale");
-      status("HD video is ready. Waiting briefly before download.");
+      status("고화질 비디오가 준비되었습니다. 저장 준비 중입니다.");
       await sleep(WAIT.afterUpscale);
       return url;
     } catch (error) {
-      status(`Upscale wait failed: ${error.message}\nDownloading current video.`);
+      status(`고화질 변환 대기 중 문제가 생겼습니다.\n현재 비디오로 저장합니다.\n${error.message}`);
       return currentVideoUrl(false) || before;
     }
   }
@@ -2029,13 +2027,14 @@
         const number = startIndex + i;
         const padded = String(number).padStart(2, "0");
         const total = scenes.length;
+        const sceneLabel = `장면 ${i + 1}/${total}`;
 
         if (phase === "submitted") {
-          status(`[${i + 1}/${total}] Generation was already submitted. Waiting for result...`);
+          status(`${sceneLabel} · 이미 제출된 작업입니다.\n생성 결과를 기다리는 중입니다.`);
         } else if (phase === "downloading" && finalMediaUrl) {
-          status(`[${i + 1}/${total}] Result was already found. Preparing to retry download...`);
+          status(`${sceneLabel} · 결과를 찾았습니다.\n저장을 다시 시도하는 중입니다.`);
         } else {
-          status(`[${i + 1}/${total}] Preparing Imagine page...`);
+          status(`${sceneLabel} · Grok Imagine 화면을 준비하는 중입니다.`);
           await ensureImagineHome();
           await ensureGenerationSettings(generation);
 
@@ -2049,14 +2048,14 @@
           currentPhase = "editing";
 
           if (scene.image) {
-            status(`[${i + 1}/${total}] Uploading scene image...`);
+            status(`${sceneLabel} · 이미지를 업로드하는 중입니다.`);
             await uploadImage(scene.image);
             await ensureGenerationSettings(generation);
           } else {
-            status(`[${i + 1}/${total}] Using prompt only. Skipping image upload.`);
+            status(`${sceneLabel} · 프롬프트만 사용합니다.\n이미지 업로드는 건너뜁니다.`);
           }
 
-          status(`[${i + 1}/${total}] Entering prompt and generating...`);
+          status(`${sceneLabel} · 프롬프트를 입력하고 생성을 시작합니다.`);
           const promptEditor = await setPrompt(scene.prompt);
           phase = "submitting";
           currentPhase = phase;
@@ -2074,14 +2073,14 @@
         const retryingPendingDownload = phase === "downloading" && finalMediaUrl;
         let imageItems = [];
         if (retryingPendingDownload) {
-          status(`[${i + 1}/${total}] Download was pending. Retrying download...`);
+          status(`${sceneLabel} · 저장이 끝나지 않은 작업을 다시 확인합니다.`);
           if (!isVideo) {
             imageItems = await waitForGeneratedImages(previousUrl, generation, previousDetailKeys, previousDetailMarker);
             finalMediaUrl = imageItems[0]?.url || "";
             currentFinalMediaUrl = mediaUrlKey(finalMediaUrl);
           }
         } else {
-          status(`[${i + 1}/${total}] Waiting for ${isVideo ? "video" : "image"} generation...`);
+          status(`${sceneLabel} · ${isVideo ? "비디오" : "이미지"} 생성 결과를 기다리는 중입니다.`);
 
           if (isVideo) {
             finalMediaUrl = await waitForGeneratedVideo(previousUrl);
@@ -2090,7 +2089,7 @@
               finalMediaUrl = await tryUpscale();
               currentFinalMediaUrl = finalMediaUrl;
             } else if (generation.resolution === "720p") {
-              status("720p video was generated directly. Skipping upscale and downloading.");
+              status("720p 비디오가 바로 생성되었습니다. 고화질 변환 없이 저장합니다.");
             }
           } else {
             imageItems = await waitForGeneratedImages(previousUrl, generation, previousDetailKeys, previousDetailMarker);
@@ -2113,9 +2112,9 @@
 
         if (isVideo) {
           const filename = `${baseFilename}.mp4`;
-          status(`[${i + 1}/${total}] Downloading...\n${filename}`);
+          status(`${sceneLabel} · 비디오를 저장하는 중입니다.\n${filename}`);
           if (retryingPendingDownload && downloadedUrls.has(mediaUrlKey(finalMediaUrl))) {
-            status(`[${i + 1}/${total}] Download already completed. Moving to the next scene.`);
+            status(`${sceneLabel} · 이미 저장된 파일입니다.\n다음 장면으로 넘어갑니다.`);
           } else {
             await downloadMedia(finalMediaUrl, filename);
           }
@@ -2127,10 +2126,10 @@
             const item = imageItems[imageIndex];
             const suffix = imageItems.length > 1 ? `_${String(imageIndex + 1).padStart(2, "0")}` : "";
             const filename = `${baseFilename}${suffix}.${item.detailOnly ? "png" : imageExtensionForUrl(item.url)}`;
-            status(`[${i + 1}/${total}] Downloading first image result...\n${filename}`);
+            status(`${sceneLabel} · 첫 번째 이미지 결과를 저장하는 중입니다.\n${filename}`);
             const itemDownloadKey = mediaUrlKey(item.sourceUrl || item.url);
             if (retryingPendingDownload && downloadedUrls.has(itemDownloadKey)) {
-              status(`[${i + 1}/${total}] Image ${imageIndex + 1} was already downloaded.`);
+              status(`${sceneLabel} · 이미지 ${imageIndex + 1}은 이미 저장되어 있습니다.`);
             } else {
               await downloadImageViaDetail(item, filename);
             }
@@ -2139,7 +2138,7 @@
 
         await releaseImagePayload(scene.image);
         await saveSession(payload, i + 1, true, { phase: "ready", previousUrl: "" });
-        status(`[${i + 1}/${total}] Done.`);
+        status(`${sceneLabel} · 완료되었습니다.`);
 
         if (i < scenes.length - 1) {
           await goBackToImagine();
@@ -2147,7 +2146,7 @@
       }
 
       await clearSession();
-      status(`All done: ${scenes.length} ${generation.mode === "video" ? "videos" : "images"}.`);
+      status(`완료: ${scenes.length}개 ${generation.mode === "video" ? "비디오" : "이미지"} 작업이 끝났습니다.`);
     } catch (error) {
       const summary = debugSummary();
       console.warn(`[Grok Auto Debug Summary]\n${summary}`);
@@ -2169,7 +2168,7 @@
           }
         }).catch(() => {});
       }
-      status(`Stopped: ${error.message}\n${summary}`);
+      status(`중지됨: ${error.message}\n문제가 계속되면 콘솔의 디버그 정보를 확인해 주세요.`);
       throw error;
     } finally {
       running = false;
@@ -2183,24 +2182,24 @@
       await clearSession();
       return;
     }
-    status("Saved session found. It will not auto-resume after refresh. Use Resume, Retry, or Clear Session in the side panel.");
+    status("이어서 진행할 작업이 있습니다. 사이드 패널에서 이어하기, 다시 시도, 기록 삭제를 선택해 주세요.");
   }
 
   async function recoverableSession() {
     const session = await storageGet(SESSION_KEY).catch(() => null);
     if (!session?.active || !session.payload?.scenes?.length) {
-      throw new Error("No saved session was found.");
+      throw new Error("저장된 진행 기록을 찾지 못했습니다.");
     }
     if (session.nextIndex >= session.payload.scenes.length) {
       await clearSession();
-      throw new Error("The saved session is already complete.");
+      throw new Error("저장된 진행 기록은 이미 완료되었습니다.");
     }
     return session;
   }
 
   async function startFromSession(session) {
     if (running || startRequested) {
-      throw new Error("Automation is already running.");
+      throw new Error("이미 자동화가 실행 중입니다.");
     }
     startRequested = true;
     runQueue(session.payload, session.nextIndex, session).catch(() => {
@@ -2217,7 +2216,7 @@
     if (message?.type === "GROK_AUTO_STOP_V2") {
       stopRequested = true;
       recoverableSession().then((session) => releasePayloadImages(session.payload, session.nextIndex)).catch(() => {}).then(() => clearSession());
-      status("Stop requested. The current step will stop shortly.");
+      status("중지 요청됨. 현재 단계가 정리되면 멈춥니다.");
       sendResponse({ ok: true });
       return false;
     }
@@ -2249,7 +2248,7 @@
           const nextIndex = session.nextIndex + 1;
           if (nextIndex >= session.payload.scenes.length) {
             await clearSession();
-            status("Skipped the last scene. No more scenes to run.");
+            status("마지막 장면을 건너뛰었습니다. 더 실행할 장면이 없습니다.");
             return null;
           }
           await saveSession(session.payload, nextIndex, true, { phase: "start", previousUrl: "" });
@@ -2271,7 +2270,7 @@
         .then(() => clearSession())
         .then(() => {
           stopRequested = true;
-          status("Saved session was cleared.");
+          status("저장된 진행 기록을 삭제했습니다.");
           sendResponse({ ok: true });
         })
         .catch((error) => sendResponse({ ok: false, error: error.message }));
@@ -2280,7 +2279,7 @@
 
     if (message?.type === "GROK_AUTO_START_V2") {
       if (running || startRequested) {
-        sendResponse({ ok: false, error: "Automation is already running." });
+        sendResponse({ ok: false, error: "이미 자동화가 실행 중입니다." });
         return false;
       }
 

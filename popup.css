@@ -18,9 +18,10 @@ body {
 main {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  min-height: 100vh;
   padding: 12px;
   gap: 8px;
+  overflow-y: auto;
 }
 
 .top {
@@ -120,6 +121,17 @@ h1 {
   padding: 8px 10px;
 }
 
+.bulk-import #importScenes {
+  border: 1px solid rgba(184, 242, 154, 0.34);
+  color: #0d1a0a;
+  background: #b8f29a;
+  box-shadow: 0 0 0 1px rgba(184, 242, 154, 0.16);
+}
+
+.bulk-import #importScenes:hover {
+  background: #c6f6ad;
+}
+
 .import-help {
   margin: 8px 0 0;
   color: #aaa;
@@ -144,14 +156,35 @@ h1 {
 
 .image-save-note {
   grid-column: 1 / -1;
-  margin: -1px 3px 2px;
-  padding: 7px 8px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  margin: 0 3px 2px;
+  padding: 7px 9px;
   border: 1px solid #38533d;
   border-radius: 6px;
   color: #d7ead2;
   background: #152016;
-  font-size: 11px;
-  line-height: 1.35;
+  font-size: 10.5px;
+  line-height: 1.2;
+}
+
+.image-save-note strong {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border-radius: 5px;
+  color: #0f1a0b;
+  background: #b8f29a;
+  font-size: 10px;
+  line-height: 1.1;
+}
+
+.image-save-note span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .segmented {
@@ -209,29 +242,34 @@ h1 {
 
 .scene-list {
   display: grid;
-  gap: 10px;
-  flex: 1 1 auto;
-  min-height: 240px;
-  overflow: auto;
-  padding-right: 4px;
+  gap: 12px;
+  flex: 0 0 auto;
+  min-height: 0;
+  overflow: visible;
+  padding-right: 0;
 }
 
 .scene {
   border: 1px solid #333;
   border-radius: 8px;
   background: #171717;
-  padding: 10px;
+  min-height: 360px;
+  padding: 12px;
+}
+
+.scene.prompt-only {
+  min-height: 300px;
 }
 
 .scene-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
 .scene-head strong {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .remove-scene {
@@ -244,6 +282,7 @@ h1 {
 
 .settings {
   flex: 0 0 auto;
+  margin-top: 10px;
 }
 
 .field {
@@ -272,7 +311,7 @@ h1 {
 }
 
 .image-field.disabled {
-  opacity: 0.55;
+  display: none;
 }
 
 input,
@@ -295,16 +334,30 @@ textarea {
   resize: vertical;
 }
 
+.scene-prompt {
+  min-height: 190px;
+  max-height: 260px;
+  padding: 10px 11px;
+  color: #fff;
+  background: #151515;
+  line-height: 1.5;
+}
+
+.scene-prompt:focus {
+  border-color: #7fd36b;
+  outline: 1px solid rgba(127, 211, 107, 0.32);
+}
+
 .row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 92px;
-  gap: 10px;
-  padding: 9px;
+  gap: 8px;
+  padding: 7px 8px;
   border: 1px solid #514831;
   border-radius: 8px;
   background: #211d13;
   box-shadow: inset 3px 0 0 #e2b85e;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 
 .row .field span {
@@ -323,7 +376,7 @@ textarea {
 }
 
 .small {
-  margin-bottom: 10px;
+  margin-bottom: 0;
 }
 
 .check {
@@ -375,7 +428,7 @@ textarea {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
-  margin-top: 12px;
+  margin-top: 4px;
 }
 
 .buttons #start {
@@ -423,11 +476,11 @@ button:disabled {
 }
 
 #status {
-  min-height: 70px;
+  min-height: 46px;
   max-height: 160px;
   overflow: auto;
-  margin: 14px 0 0;
-  padding: 10px;
+  margin: 12px 0 0;
+  padding: 9px 10px;
   border-radius: 8px;
   color: #d7f5d7;
   background: #071007;

@@ -34,9 +34,7 @@ function setStatus(text) {
 
 async function showRuntimeInfo() {
   const manifestVersion = chrome.runtime.getManifest().version;
-  const background = await chrome.runtime.sendMessage({ type: "GROK_AUTO_BACKGROUND_INFO" }).catch(() => null);
-  const backgroundVersion = background?.version || "background not responding";
-  setStatus(`Ready. Extension ${manifestVersion}, background ${backgroundVersion}`);
+  setStatus(`준비 완료 · Grok Video Auto v${manifestVersion}`);
 }
 
 function defaultPrefixForMode(mode = getSegmentedValue("mode")) {
@@ -151,7 +149,7 @@ function createSceneRow(index, prompt = "") {
     </label>
     <label class="field">
       <span>프롬프트</span>
-      <textarea class="scene-prompt" rows="3" placeholder="이 장면에 사용할 프롬프트">${escapeHtml(prompt)}</textarea>
+      <textarea class="scene-prompt" rows="5" placeholder="이 장면에 사용할 프롬프트">${escapeHtml(prompt)}</textarea>
     </label>
   `;
 
@@ -271,6 +269,7 @@ function updateSourceTypeUi() {
     const fileName = row.querySelector(".file-name");
     if (!field || !input || !fileName) return;
 
+    row.classList.toggle("prompt-only", promptOnly);
     field.classList.toggle("disabled", promptOnly);
     input.disabled = promptOnly;
     fileName.textContent = promptOnly
@@ -602,7 +601,7 @@ startButton.addEventListener("click", async () => {
     };
 
     await sendToTab(tab.id, { type: "GROK_AUTO_START_V2", payload });
-    setStatus(`시작됨: ${scenes.length}개 장면`);
+    setStatus(`${scenes.length}개 장면 작업을 시작합니다.`);
   } catch (error) {
     liveAutomation = false;
     setStatus(`오류: ${error.message}`);

@@ -161,7 +161,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then((result) => {
         const image = result[`${IMAGE_PAYLOAD_PREFIX}${message.imageId}`];
         if (!image?.dataUrl) {
-          sendResponse({ ok: false, error: "Image payload is no longer available. Please restart from the side panel." });
+          sendResponse({ ok: false, error: "이미지 임시 데이터가 만료되었습니다. 사이드 패널에서 다시 시작해 주세요." });
           return;
         }
         sendResponse({ ok: true, image });
@@ -178,8 +178,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "GROK_AUTO_EXPECT_NATIVE_DOWNLOAD") {
-    if (!validFilename(message.filename)) {
-      sendResponse({ ok: false, error: "Invalid native download filename." });
+  if (!validFilename(message.filename)) {
+      sendResponse({ ok: false, error: "저장 파일명이 올바르지 않습니다." });
       return false;
     }
 
@@ -198,14 +198,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "GROK_AUTO_WAIT_NATIVE_DOWNLOAD") {
     const watch = nativeDownloadWatches.get(message.token);
     if (!watch) {
-      sendResponse({ ok: false, error: "Native download watch was not found." });
+      sendResponse({ ok: false, error: "브라우저 다운로드 상태를 찾지 못했습니다." });
       return false;
     }
 
     const noDownloadTimeout = setTimeout(() => {
-      if (!watch.downloadId) finish(false, { error: "Native download was not created. It may have been blocked by Chrome pop-up protection." });
+      if (!watch.downloadId) finish(false, { error: "다운로드가 시작되지 않았습니다. Chrome 팝업 차단에 막혔을 수 있습니다." });
     }, 8_000);
-    const timeout = setTimeout(() => finish(false, { error: "Native download completion timed out." }), 10 * 60 * 1000);
+    const timeout = setTimeout(() => finish(false, { error: "다운로드 완료 대기 시간이 초과되었습니다." }), 10 * 60 * 1000);
     let done = false;
 
     function finish(ok, payload = {}) {
@@ -241,7 +241,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     function onChanged(delta) {
       if (!watch.downloadId || delta.id !== watch.downloadId || !delta.state?.current) return;
       if (delta.state.current === "complete") finish(true);
-      if (delta.state.current === "interrupted") finish(false, { error: "Native download was interrupted." });
+      if (delta.state.current === "interrupted") finish(false, { error: "다운로드가 중단되었습니다." });
     }
 
     chrome.downloads.onChanged.addListener(onChanged);
@@ -249,7 +249,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       chrome.downloads.search({ id: watch.downloadId }, (items) => {
         const item = items?.[0];
         if (item?.state === "complete") finish(true);
-        if (item?.state === "interrupted") finish(false, { error: "Native download was interrupted." });
+        if (item?.state === "interrupted") finish(false, { error: "다운로드가 중단되었습니다." });
       });
     }
     return true;
@@ -260,7 +260,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (!validFilename(message.filename)) {
-    sendResponse({ ok: false, error: "Invalid download filename." });
+    sendResponse({ ok: false, error: "저장 파일명이 올바르지 않습니다." });
     return false;
   }
 
@@ -301,7 +301,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         pendingExtensionDownloads.delete(pendingToken);
         mapDelete(pendingFilenames, downloadId);
         mapDelete(pendingFilenames, message.url);
-        sendResponse({ ok: false, error: "Download completion timed out.", downloadId });
+        sendResponse({ ok: false, error: "다운로드 완료 대기 시간이 초과되었습니다.", downloadId });
       }, 10 * 60 * 1000);
 
       function onChanged(delta) {
@@ -332,7 +332,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         if (delta.state.current === "interrupted") {
-          finish(false, { error: "Download was interrupted." });
+          finish(false, { error: "다운로드가 중단되었습니다." });
         }
       }
 
