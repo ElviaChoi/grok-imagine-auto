@@ -13,10 +13,57 @@
         <p class="hint">장면별 이미지와 프롬프트를 넣으면 선택한 설정으로 순서대로 생성하고 저장합니다.</p>
       </header>
 
-      <div class="scene-toolbar">
-        <button id="addScene" type="button" class="secondary">장면 추가</button>
-        <button id="make20" type="button" class="secondary">20개로 맞추기</button>
-        <button id="clearPrompts" type="button" class="secondary danger">프롬프트 지우기</button>
+      <div class="scene-toolbar scene-toolbar-main">
+        <button
+          id="addScene"
+          type="button"
+          class="secondary"
+          title="맨 아래에 빈 장면 한 줄을 추가합니다. 줄마다 이미지와 프롬프트를 따로 넣을 수 있습니다."
+        >
+          장면 추가
+        </button>
+        <button
+          id="make20"
+          type="button"
+          class="secondary"
+          title="장면 줄 개수를 정확히 20개로 맞춥니다. 20개보다 적으면 아래에 빈 줄을 추가하고, 20개보다 많으면 맨 아래 장면부터 통째로 삭제되니 줄이기 전에 내용을 확인하세요."
+        >
+          20개로 맞추기
+        </button>
+      </div>
+      <div class="scene-toolbar scene-toolbar-clear" role="group" aria-label="장면 입력 정리">
+        <button
+          id="clearPromptsOnly"
+          type="button"
+          class="secondary"
+          title="모든 장면에서 프롬프트 글만 지웁니다. 각 줄에 선택해 둔 이미지 파일은 그대로 둡니다."
+        >
+          프롬프트만 지우기
+        </button>
+        <button
+          id="clearImagesOnly"
+          type="button"
+          class="secondary"
+          title="모든 장면에서 이미지 선택만 지웁니다. 위쪽 CSV의 ‘이미지 여러 장’으로 고른 목록도 함께 비웁니다. 프롬프트 글은 그대로 둡니다."
+        >
+          이미지만 지우기
+        </button>
+        <button
+          id="clearPromptsAndImages"
+          type="button"
+          class="secondary danger"
+          title="지금 있는 모든 장면 줄은 그대로 두고, 각 줄의 프롬프트와 이미지 선택만 모두 지웁니다. CSV·일괄 이미지로 고른 파일 목록도 초기화됩니다."
+        >
+          프롬프트·이미지 지우기
+        </button>
+        <button
+          id="clearAllScenes"
+          type="button"
+          class="secondary danger"
+          title="장면 줄을 모두 없앤 뒤 빈 장면 한 줄만 남깁니다. 프롬프트·이미지·표 파일·일괄 이미지 선택이 한꺼번에 초기화됩니다."
+        >
+          장면 전부 비우기
+        </button>
       </div>
 
       <details class="bulk-import">

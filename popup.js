@@ -208,7 +208,24 @@ function clearPromptValues() {
     input.value = "";
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  setStatus("프롬프트를 모두 지웠습니다. 이미지 선택은 유지됩니다.");
+  setStatus("모든 장면의 프롬프트를 지웠습니다. 이미지는 그대로입니다.");
+}
+
+function resetFileInput(el) {
+  if (el) el.value = "";
+}
+
+function clearBulkImportInputs() {
+  resetFileInput($("#tableFile"));
+  resetFileInput($("#bulkImages"));
+}
+
+function clearAllSceneImageInputs() {
+  sceneList.querySelectorAll(".scene-image").forEach((input) => {
+    input.value = "";
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  updateSourceTypeUi();
 }
 
 function setSegmentedValue(name, value) {
@@ -479,11 +496,49 @@ function bindAutosave() {
     });
   });
 
-  $("#clearPrompts").addEventListener("click", () => {
-    if (!confirm("모든 장면의 프롬프트를 지울까요? 이미지 선택은 유지됩니다.")) {
+  $("#clearPromptsOnly").addEventListener("click", () => {
+    if (!confirm("모든 장면의 프롬프트만 지울까요? (이미지 선택은 유지됩니다)")) {
       return;
     }
     clearPromptValues();
+    scheduleSave();
+  });
+
+  $("#clearImagesOnly").addEventListener("click", () => {
+    if (!confirm("모든 장면의 이미지 선택과, 아래에서 고른 ‘이미지 여러 장’ 목록을 지울까요? (프롬프트는 유지됩니다)")) {
+      return;
+    }
+    clearBulkImportInputs();
+    clearAllSceneImageInputs();
+    setStatus("이미지 선택을 모두 지웠습니다. 프롬프트는 그대로입니다.");
+    scheduleSave();
+  });
+
+  $("#clearPromptsAndImages").addEventListener("click", () => {
+    if (!confirm("모든 장면의 프롬프트와 이미지를 함께 지울까요? 장면 개수는 그대로입니다.")) {
+      return;
+    }
+    clearBulkImportInputs();
+    clearPromptValues();
+    clearAllSceneImageInputs();
+    setStatus("모든 장면의 프롬프트와 이미지를 지웠습니다.");
+    scheduleSave();
+  });
+
+  $("#clearAllScenes").addEventListener("click", () => {
+    if (
+      !confirm(
+        "장면을 모두 지우고 빈 장면 1개만 남길까요? 프롬프트·이미지·표/일괄 이미지 선택이 모두 초기화됩니다."
+      )
+    ) {
+      return;
+    }
+    clearBulkImportInputs();
+    sceneList.innerHTML = "";
+    addScene("");
+    renumberScenes();
+    updateSourceTypeUi();
+    setStatus("장면을 비우고 새 장면 1개를 준비했습니다.");
     scheduleSave();
   });
 }
