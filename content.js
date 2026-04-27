@@ -875,7 +875,7 @@
         if (!items.length && newDetailCards.length && Date.now() - started > 4_000) {
         const selected = [{ detailOnly: true, index: 0, url: "detail:0" }];
         status(
-          `이미지 결과 카드가 보입니다.\n첫 번째 결과를 자동 저장합니다. (1/${newDetailCards.length})\n나머지는 Grok 화면에서 직접 저장할 수 있습니다.`
+          "이미지 결과 카드가 보입니다.\n첫 번째 결과를 자동 저장합니다.\n나머지는 Grok 화면에서 직접 저장할 수 있습니다."
         );
         debug("using detail download fallback", {
           cards: detailCards.length,
@@ -897,7 +897,7 @@
         if (!items.length && newDetailCards.length) {
           const selected = [{ detailOnly: true, index: 0, url: "detail:0" }];
           status(
-            `이미지 결과 카드가 보입니다.\n첫 번째 결과를 자동 저장합니다. (1/${newDetailCards.length})\n나머지는 Grok 화면에서 직접 저장할 수 있습니다.`
+            "이미지 결과 카드가 보입니다.\n첫 번째 결과를 자동 저장합니다.\n나머지는 Grok 화면에서 직접 저장할 수 있습니다."
           );
           debug("using detail download fallback", {
             cards: detailCards.length,
