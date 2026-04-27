@@ -1,6 +1,9 @@
 (() => {
   const SCRIPT_VERSION = "2026-04-23-single-click-v53";
   const DEBUG = false;
+  const OVERLAY_PROGRESS_HIDE_MS = 2500;
+  const OVERLAY_SUCCESS_HIDE_MS = 4000;
+  const OVERLAY_FADE_MS = 250;
 
   if (window.__grokImagineVideoAutomatorVersion === SCRIPT_VERSION) {
     return;
@@ -68,6 +71,8 @@
   let startRequested = false;
   let activeRunId = "";
   let lastDebugSnapshot = null;
+  let overlayHideTimeout = null;
+  let overlayFadeTimeout = null;
   const downloadedUrls = new Set();
 
   function sessionPayload(payload) {
@@ -116,11 +121,32 @@
     downloadedUrls.add(key);
   }
 
-  function status(text) {
+  function status(text, options = {}) {
     console.log(`[Grok Auto] ${text}`);
     const statusRunning = running && !/^(All done:|Stopped:|Stop requested\.|완료:|중지됨:|중지 요청됨)/.test(text);
     chrome.runtime.sendMessage({ type: "GROK_AUTO_STATUS", text, running: statusRunning }).catch(() => {});
-    renderOverlay(text);
+    const toastMarkers = [
+      "완료:",
+      "· 완료되었습니다",
+      "프롬프트를 입력하고 생성을 시작합니다",
+      "720p 비디오가 바로 생성되었습니다",
+      "업스케일 시작",
+      "업스케일 처리 중",
+      "업스케일 완료",
+      "업스케일 실패",
+      "이어서 진행할 작업이 있습니다",
+      "중지됨:",
+      "중지 요청됨",
+      "건너뛰었습니다",
+      "기록을 삭제했습니다",
+      "찾지 못했습니다",
+      "문제가 생겼습니다"
+    ];
+    const shouldToast = options.toast ?? toastMarkers.some((marker) => text.includes(marker));
+    if (!shouldToast) return;
+    renderOverlay(text, {
+      autoHideMs: options.toastDurationMs ?? (statusRunning ? OVERLAY_PROGRESS_HIDE_MS : OVERLAY_SUCCESS_HIDE_MS)
+    });
   }
 
   function debug(label, data = {}) {
@@ -164,7 +190,18 @@
     ].join("\n");
   }
 
-  function renderOverlay(text) {
+  function clearOverlayTimers() {
+    if (overlayHideTimeout) {
+      clearTimeout(overlayHideTimeout);
+      overlayHideTimeout = null;
+    }
+    if (overlayFadeTimeout) {
+      clearTimeout(overlayFadeTimeout);
+      overlayFadeTimeout = null;
+    }
+  }
+
+  function renderOverlay(text, { autoHideMs = 0 } = {}) {
     let box = document.getElementById("grok-auto-overlay");
     if (!box) {
       box = document.createElement("div");
@@ -182,11 +219,31 @@
         background: "rgba(0, 0, 0, .82)",
         font: "12px/1.45 system-ui, sans-serif",
         whiteSpace: "pre-wrap",
-        boxShadow: "0 8px 24px rgba(0,0,0,.28)"
+        boxShadow: "0 8px 24px rgba(0,0,0,.28)",
+        opacity: "1",
+        transform: "translateY(0)",
+        transition: `opacity ${OVERLAY_FADE_MS}ms ease, transform ${OVERLAY_FADE_MS}ms ease`,
+        pointerEvents: "none"
       });
       document.documentElement.appendChild(box);
     }
+
+    clearOverlayTimers();
     box.textContent = text;
+    box.style.opacity = "1";
+    box.style.transform = "translateY(0)";
+
+    if (autoHideMs > 0) {
+      overlayHideTimeout = window.setTimeout(() => {
+        box.style.opacity = "0";
+        box.style.transform = "translateY(-6px)";
+        overlayFadeTimeout = window.setTimeout(() => {
+          if (box.isConnected) box.remove();
+          overlayFadeTimeout = null;
+        }, OVERLAY_FADE_MS);
+        overlayHideTimeout = null;
+      }, autoHideMs);
+    }
   }
 
   function assertNotStopped() {
@@ -1012,6 +1069,58 @@
     return card.root || start;
   }
 
+  function findUpscaleChoiceCards() {
+    const cards = resultImageCards()
+      .filter((item) => {
+        if (!item?.root || !item?.clickTarget) return false;
+        if (ignoredImageContext(item.root) || ignoredImageContext(item.clickTarget)) return false;
+        if (item.renderedWidth < 180 || item.renderedHeight < 120) return false;
+        if (item.renderedWidth > window.innerWidth * 0.45) return false;
+        if (item.renderedHeight > window.innerHeight * 0.65) return false;
+        if (item.top < 80 || item.top > window.innerHeight - 120) return false;
+        if (item.left < 120 || item.left > window.innerWidth - 120) return false;
+        if (item.root.closest("nav, aside, .query-bar, form, [contenteditable='true'], #grok-auto-overlay")) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const rowDelta = a.top - b.top;
+        if (Math.abs(rowDelta) > 32) return rowDelta;
+        return a.left - b.left;
+      });
+
+    if (cards.length < 2) return [];
+    const firstRowTop = cards[0].top;
+    const firstRow = cards.filter((card) => Math.abs(card.top - firstRowTop) <= 32);
+    return firstRow.length >= 2 ? firstRow : cards.slice(0, 2);
+  }
+
+  async function chooseUpscaleCandidate(prefer = "left") {
+    const cards = await waitFor(() => {
+      const found = findUpscaleChoiceCards();
+      return found.length >= 2 ? found : null;
+    }, 8_000, "upscale choice cards").catch(() => null);
+
+    if (!cards?.length) return false;
+
+    const sorted = [...cards].sort((a, b) => a.left - b.left);
+    const target = prefer === "right" ? sorted[sorted.length - 1] : sorted[0];
+    debug("upscale candidate auto-select", {
+      prefer,
+      candidates: sorted.map((item) => ({
+        left: Math.round(item.left || 0),
+        top: Math.round(item.top || 0),
+        renderedWidth: Math.round(item.renderedWidth || 0),
+        renderedHeight: Math.round(item.renderedHeight || 0),
+        naturalWidth: item.naturalWidth || 0,
+        naturalHeight: item.naturalHeight || 0,
+        url: item.url
+      }))
+    });
+    click(clickableResultTarget(target));
+    await sleep(800);
+    return true;
+  }
+
   function findDetailDownloadButton() {
     const buttons = [...document.querySelectorAll("button[aria-label='\uB2E4\uC6B4\uB85C\uB4DC'], button[aria-label='Download']")]
       .filter(visible)
@@ -1567,7 +1676,7 @@
     if (!button) {
       const more = findOpenMoreButton();
       if (more) {
-        status("고화질 변환 버튼을 찾는 중입니다.");
+        status("업스케일 버튼 확인 중");
         click(more);
         button = await waitFor(
           () =>
@@ -1580,21 +1689,22 @@
     }
 
     if (!button) {
-      status("고화질 변환 버튼을 찾지 못했습니다. 현재 화질로 저장합니다.");
+      status("업스케일 버튼 없음, 현재 화질로 저장");
       return before;
     }
 
-    status("고화질 변환을 시작합니다.");
+    status("업스케일 시작");
     click(button);
-    status("고화질 비디오가 완성되기를 기다리는 중입니다.");
+    await chooseUpscaleCandidate("left").catch(() => false);
+    status("업스케일 처리 중");
 
     try {
       const url = await waitForStableVideo(true, before, WAIT.upscale, "upscale");
-      status("고화질 비디오가 준비되었습니다. 저장 준비 중입니다.");
+      status("업스케일 완료");
       await sleep(WAIT.afterUpscale);
       return url;
     } catch (error) {
-      status(`고화질 변환 대기 중 문제가 생겼습니다.\n현재 비디오로 저장합니다.\n${error.message}`);
+      status(`업스케일 실패\n현재 화질로 저장\n${error.message}`);
       return currentVideoUrl(false) || before;
     }
   }
