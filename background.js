@@ -17,6 +17,7 @@ const pendingExtensionDownloads = new Map();
 const nativeDownloadWatches = new Map();
 const IMAGE_PAYLOAD_PREFIX = "grokVideoAutoImage:";
 const BACKGROUND_VERSION = "2026-04-22-direct-image-v4";
+let filenameListenerReleaseTimer = null;
 
 async function pruneImagePayloads() {
   const stored = await chrome.storage.local.get(null);
@@ -61,9 +62,12 @@ function findPendingExtensionDownload(item = {}) {
   });
 }
 
-chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+function handleDeterminingFilename(item, suggest) {
+  pruneExpiredDownloadTrackers();
+
   if (item.byExtensionId && item.byExtensionId !== chrome.runtime.id) {
     suggest();
+    scheduleFilenameListenerRelease();
     return;
   }
 
@@ -100,11 +104,51 @@ chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
 
   if (validFilename(filename)) {
     suggest({ filename, conflictAction: "uniquify" });
+    scheduleFilenameListenerRelease();
     return;
   }
 
   suggest();
-});
+  scheduleFilenameListenerRelease();
+}
+
+function ensureFilenameListener() {
+  if (filenameListenerReleaseTimer) {
+    clearTimeout(filenameListenerReleaseTimer);
+    filenameListenerReleaseTimer = null;
+  }
+  if (!chrome.downloads.onDeterminingFilename.hasListener(handleDeterminingFilename)) {
+    chrome.downloads.onDeterminingFilename.addListener(handleDeterminingFilename);
+  }
+}
+
+function scheduleFilenameListenerRelease() {
+  if (filenameListenerReleaseTimer) clearTimeout(filenameListenerReleaseTimer);
+  filenameListenerReleaseTimer = setTimeout(() => {
+    pruneExpiredDownloadTrackers();
+    if (pendingExtensionDownloads.size || nativeDownloadWatches.size) {
+      scheduleFilenameListenerRelease();
+      return;
+    }
+    if (chrome.downloads.onDeterminingFilename.hasListener(handleDeterminingFilename)) {
+      chrome.downloads.onDeterminingFilename.removeListener(handleDeterminingFilename);
+    }
+  }, 1000);
+}
+
+function pruneExpiredDownloadTrackers() {
+  const now = Date.now();
+  for (const [token, pending] of pendingExtensionDownloads.entries()) {
+    if (pending.expiresAt <= now && !pending.downloadId) {
+      pendingExtensionDownloads.delete(token);
+    }
+  }
+  for (const [token, watch] of nativeDownloadWatches.entries()) {
+    if (watch.expiresAt <= now && !watch.downloadId) {
+      nativeDownloadWatches.delete(token);
+    }
+  }
+}
 
 chrome.downloads.onCreated.addListener((item) => {
   if (item.byExtensionId === chrome.runtime.id) {
@@ -191,6 +235,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       downloadId: null,
       expiresAt: Date.now() + 45_000
     });
+    ensureFilenameListener();
+    scheduleFilenameListenerRelease();
     sendResponse({ ok: true, token });
     return false;
   }
@@ -215,6 +261,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       clearTimeout(timeout);
       chrome.downloads.onChanged.removeListener(onChanged);
       nativeDownloadWatches.delete(message.token);
+      scheduleFilenameListenerRelease();
       if (watch.downloadId) mapDelete(pendingFilenames, watch.downloadId);
       if (!watch.downloadId) {
         sendResponse({
@@ -273,6 +320,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     downloadId: null
   });
   mapSet(pendingFilenames, message.url, message.filename);
+  ensureFilenameListener();
+  scheduleFilenameListenerRelease();
 
   chrome.downloads.download(
     {
@@ -285,6 +334,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (chrome.runtime.lastError) {
         pendingExtensionDownloads.delete(pendingToken);
         mapDelete(pendingFilenames, message.url);
+        scheduleFilenameListenerRelease();
         sendResponse({ ok: false, error: chrome.runtime.lastError.message });
         return;
       }
@@ -315,6 +365,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           pendingExtensionDownloads.delete(pendingToken);
           mapDelete(pendingFilenames, downloadId);
           mapDelete(pendingFilenames, message.url);
+          scheduleFilenameListenerRelease();
           chrome.downloads.search({ id: downloadId }, (items) => {
             const item = items?.[0];
             sendResponse({

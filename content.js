@@ -4,6 +4,8 @@
   const OVERLAY_PROGRESS_HIDE_MS = 2500;
   const OVERLAY_SUCCESS_HIDE_MS = 4000;
   const OVERLAY_FADE_MS = 250;
+  const UPSCALE_CHOICE_WAIT_MS = 8_000;
+  const UPSCALE_CHOICE_SETTLE_MS = 10_000;
 
   if (window.__grokImagineVideoAutomatorVersion === SCRIPT_VERSION) {
     return;
@@ -1094,11 +1096,11 @@
     return firstRow.length >= 2 ? firstRow : cards.slice(0, 2);
   }
 
-  async function chooseUpscaleCandidate(prefer = "left") {
+  async function chooseUpscaleCandidate(prefer = "left", timeoutMs = UPSCALE_CHOICE_WAIT_MS) {
     const cards = await waitFor(() => {
       const found = findUpscaleChoiceCards();
       return found.length >= 2 ? found : null;
-    }, 8_000, "upscale choice cards").catch(() => null);
+    }, timeoutMs, "upscale choice cards").catch(() => null);
 
     if (!cards?.length) return false;
 
@@ -1117,6 +1119,10 @@
       }))
     });
     click(clickableResultTarget(target));
+    await waitFor(() => {
+      const remaining = findUpscaleChoiceCards();
+      return remaining.length < 2 ? true : null;
+    }, UPSCALE_CHOICE_SETTLE_MS, "upscale choice selection").catch(() => null);
     await sleep(800);
     return true;
   }
@@ -1689,13 +1695,13 @@
     }
 
     if (!button) {
-      status("업스케일 버튼 없음, 현재 화질로 저장");
-      return before;
+      status("업스케일 버튼 없음, 원본 다운로드 중지");
+      throw new Error("Upscale button was not found, so the scene was not downloaded.");
     }
 
     status("업스케일 시작");
     click(button);
-    await chooseUpscaleCandidate("left").catch(() => false);
+    await chooseUpscaleCandidate("left");
     status("업스케일 처리 중");
 
     try {
@@ -1704,8 +1710,8 @@
       await sleep(WAIT.afterUpscale);
       return url;
     } catch (error) {
-      status(`업스케일 실패\n현재 화질로 저장\n${error.message}`);
-      return currentVideoUrl(false) || before;
+      status(`업스케일 실패\n원본 다운로드 중지\n${error.message}`);
+      throw new Error(`Upscale failed, so the original video was not downloaded. ${error.message}`);
     }
   }
 
