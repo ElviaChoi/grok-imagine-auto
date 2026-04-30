@@ -1,5 +1,5 @@
 (() => {
-  const SCRIPT_VERSION = "2026-04-23-single-click-v53";
+  const SCRIPT_VERSION = "2026-04-30-video-choice-v57";
   const DEBUG = false;
   const OVERLAY_PROGRESS_HIDE_MS = 2500;
   const OVERLAY_SUCCESS_HIDE_MS = 4000;
@@ -50,6 +50,7 @@
     imageUrlLooksPreviewOnly,
     cardLooksLargeEnoughForDirectPreview,
     imageUrlLooksGenerated,
+    imageUrlLooksReferenceUpload,
     inlineImageUrlLooksResult,
     imageItemLooksFinal,
     imageExtensionForUrl,
@@ -188,6 +189,7 @@
       `submit: ${JSON.stringify(snapshot.submitButton || { disabled: snapshot.submitDisabled, aria: snapshot.submitAria })}`,
       `promptEcho: ${snapshot.promptEcho}`,
       `currentImages: ${snapshot.currentImages}`,
+      `currentVideos: ${snapshot.currentVideos}`,
       snapshot.detailCandidates ? `detailCandidates: ${JSON.stringify(snapshot.detailCandidates).slice(0, 1200)}` : ""
     ].join("\n");
   }
@@ -338,6 +340,7 @@
     if (promptAppearsOutsideEditor(prompt)) return true;
     if (requirePromptEcho) return false;
     const expected = normalize(prompt).slice(0, 60);
+    if (!onImagineHome() && /\/imagine\/post\//.test(location.pathname)) return true;
     const latestEditor = findPromptEditor();
     const latestText = promptEditorText(latestEditor);
     if (onImagineHome() && expected && latestText.includes(expected)) return false;
@@ -982,6 +985,7 @@
           return false;
         }
         if (/profile-picture|pfp/i.test(item.url)) return false;
+        if (imageUrlLooksReferenceUpload(item.url)) return false;
         if (imageUrlLooksPreviewOnly(item.url) && !cardLooksLargeEnoughForDirectPreview(item)) return false;
         if (item.area < 30_000) return false;
         if (item.naturalWidth && item.naturalHeight && Math.min(item.naturalWidth, item.naturalHeight) < 180) {
@@ -1033,6 +1037,7 @@
         if (text.length > 80) return false;
         if (el.matches("button, a, svg, input, textarea, [contenteditable='true']")) return false;
         if (ignoredImageContext(el)) return false;
+        if (imageUrlLooksReferenceUpload(item.url)) return false;
         if (/sidebar|menu-button|radix|toolbar/i.test(String(el.className || ""))) return false;
         return Boolean(item.media || item.img || item.url || el.querySelector("button, svg"));
       });
@@ -1151,6 +1156,7 @@
       }
     }
     if (!url || /^data:image\/svg/i.test(url)) return null;
+    if (imageUrlLooksReferenceUpload(url)) return null;
     if (!/^https?:|^blob:|^data:image\//i.test(url)) return null;
     if (imageUrlLooksPreviewOnly(url) && rect.width * rect.height < 120_000) return null;
     if (rect.width < 240 || rect.height < 160 || rect.width * rect.height < 120_000) return null;
@@ -1176,8 +1182,39 @@
     const images = [...(article || document).querySelectorAll("img[src^='data:image/'], img[class*='object-cover']")]
       .map(detailImageFromElement)
       .filter(Boolean)
+      .filter((item) => !imageUrlLooksReferenceUpload(item.url))
       .sort((a, b) => b.area - a.area);
     return images[0] || null;
+  }
+
+  async function ensureGeneratedFilmstripSelection(preferIndex = 0) {
+    const items = [...document.querySelectorAll("button[data-filmstrip-item='true']")]
+      .filter(visible)
+      .map((button) => {
+        const img = button.querySelector("img");
+        return {
+          button,
+          img,
+          url: imageLikeUrlFromElement(img)
+        };
+      })
+      .filter((item) => imageUrlLooksGenerated(item.url));
+
+    if (!items.length) return false;
+
+    const selected = items.find((item) => {
+      const className = String(item.button.className || "");
+      return item.button.getAttribute("tabindex") === "0" || /\bring-white\b/.test(className);
+    });
+    if (selected) return true;
+
+    const target = items[Math.min(Math.max(preferIndex, 0), items.length - 1)];
+    click(target.button);
+    await waitFor(() => {
+      const detailImage = findDetailMainImage();
+      return detailImage && imageUrlLooksGenerated(detailImage.url) ? detailImage : null;
+    }, 3_000, "generated filmstrip image").catch(() => null);
+    return true;
   }
 
   function findDetailMainImage() {
@@ -1226,6 +1263,7 @@
         if (seen.has(key)) return false;
         seen.add(key);
         if (!item.url || /^data:image\/svg/i.test(item.url)) return false;
+        if (imageUrlLooksReferenceUpload(item.url)) return false;
         if (imageUrlLooksPreviewOnly(item.url) && !cardLooksLargeEnoughForDirectPreview(item)) return false;
         if (/profile-picture|pfp/i.test(item.url)) return false;
         if (!/^https?:|^blob:|^data:image\//i.test(item.url)) return false;
@@ -1250,6 +1288,7 @@
 
   async function openDetailDownloadButton(card) {
     if (isImaginePostDetailPage()) {
+      await ensureGeneratedFilmstripSelection(card?.index || 0);
       const existingDetailImage = findDetailMainImage();
       if (existingDetailImage) return existingDetailImage;
     }
@@ -1304,6 +1343,7 @@
   async function downloadImageViaDetail(itemOrIndex, filename) {
     const index = typeof itemOrIndex === "number" ? itemOrIndex : itemOrIndex?.index || 0;
     if (isImaginePostDetailPage()) {
+      await ensureGeneratedFilmstripSelection(index);
       const existingDetailImage = await waitFor(() => findDetailMainImage(), 8_000, "current detail image").catch(() => null);
       if (existingDetailImage?.url) {
         const directFilename = filenameWithImageExtension(filename, existingDetailImage.url);
@@ -1333,6 +1373,9 @@
     });
 
     const opened = await openDetailDownloadButton(card);
+    if (isImaginePostDetailPage()) {
+      await ensureGeneratedFilmstripSelection(index);
+    }
     const button = opened instanceof Element ? opened : findDetailDownloadButton();
     const detailImage = opened?.url
       ? opened
@@ -1608,7 +1651,8 @@
           editorText: promptEditorText(editor),
           latestEditorText: promptEditorText(findPromptEditor()),
           promptEcho: promptAppearsOutsideEditor(prompt),
-          currentImages: currentImageItems().length
+          currentImages: currentImageItems().length,
+          currentVideos: currentVideoSummary()
         });
         return submitted;
       },
@@ -1616,6 +1660,20 @@
       "generation submit"
     );
     status("프롬프트 제출이 완료되었습니다.");
+  }
+
+  function currentVideoSummary() {
+    return [...document.querySelectorAll("video")]
+      .filter(visible)
+      .map((video) => ({
+        id: video.id || "",
+        url: videoUrl(video).slice(0, 180),
+        readyState: video.readyState,
+        duration: Number.isFinite(Number(video.duration)) ? Number(video.duration) : null,
+        width: Math.round(video.getBoundingClientRect().width),
+        height: Math.round(video.getBoundingClientRect().height)
+      }))
+      .slice(0, 6);
   }
 
   function videoUrl(video) {
@@ -1650,6 +1708,75 @@
     return videoUrl(currentVideoElement(preferHd));
   }
 
+  function newestPlayableVideoUrl(preferHd, previousUrl = "") {
+    const preferred = currentVideoElement(preferHd);
+    if (playable(preferred, previousUrl)) return videoUrl(preferred);
+
+    const candidates = [...document.querySelectorAll("video")]
+      .filter((video) => playable(video, previousUrl))
+      .map((video) => ({ video, rect: video.getBoundingClientRect() }))
+      .sort((a, b) => (b.rect.width * b.rect.height) - (a.rect.width * a.rect.height));
+    return candidates.length ? videoUrl(candidates[0].video) : "";
+  }
+
+  function videoChoicePromptVisible() {
+    const text = normalize(document.body?.innerText || document.body?.textContent);
+    return /어떤 동영상을 남겨두고 싶으신가요|which video/i.test(text);
+  }
+
+  function videoChoiceButtons() {
+    return [...document.querySelectorAll("button")]
+      .filter(visible)
+      .filter((button) => {
+        const text = normalize(`${button.getAttribute("aria-label") || ""} ${button.innerText || button.textContent || ""}`);
+        return /\uC120\uD638|prefer/i.test(text);
+      })
+      .map((button) => {
+        const card = button.closest(".group") || button.closest("article") || button;
+        const rect = card.getBoundingClientRect();
+        const video = card.querySelector("video") || button.closest("article")?.querySelector("video");
+        return {
+          button,
+          card,
+          video,
+          url: videoUrl(video),
+          left: rect.left,
+          top: rect.top,
+          area: rect.width * rect.height
+        };
+      })
+      .filter((item) => item.area > 20_000 || item.url)
+      .sort((a, b) => {
+        const rowDelta = a.top - b.top;
+        if (Math.abs(rowDelta) > 32) return rowDelta;
+        return a.left - b.left;
+      });
+  }
+
+  async function chooseLeftVideoCandidateIfNeeded() {
+    const choices = videoChoiceButtons();
+    if (choices.length < 2) return false;
+    const target = choices[0];
+    const before = newestPlayableVideoUrl(false, "");
+    debug("video choice auto-select", {
+      before,
+      choices: choices.map((item) => ({
+        left: Math.round(item.left),
+        top: Math.round(item.top),
+        url: item.url
+      }))
+    });
+    status("비디오 선택 화면에서 왼쪽 결과를 선택합니다.");
+    click(target.button);
+    await waitFor(() => {
+      const choiceGone = videoChoiceButtons().length < 2;
+      const url = newestPlayableVideoUrl(false, "");
+      return choiceGone && url ? url : null;
+    }, 15_000, "video choice selection").catch(() => null);
+    await sleep(1200);
+    return true;
+  }
+
   async function waitForStableVideo(preferHd, previousUrl, timeoutMs, label) {
     const video = await waitFor(() => {
       const candidate = currentVideoElement(preferHd);
@@ -1658,11 +1785,28 @@
 
     const firstUrl = videoUrl(video);
     await sleep(2500);
-    await waitFor(() => {
-      const latest = currentVideoElement(preferHd);
-      return playable(latest, previousUrl) && videoUrl(latest) === firstUrl ? latest : null;
-    }, 30_000, `${label} stable check`);
+    const latestUrl = await waitFor(() => {
+      const url = newestPlayableVideoUrl(preferHd, previousUrl);
+      debug("video stable check", {
+        label,
+        preferHd,
+        previousUrl,
+        firstUrl,
+        latestUrl: url,
+        currentVideos: currentVideoSummary()
+      });
+      return url || null;
+    }, 30_000, `${label} stable check`).catch(() => "");
 
+    if (latestUrl) return latestUrl;
+
+    debug("video stable check fallback", {
+      label,
+      preferHd,
+      previousUrl,
+      firstUrl,
+      currentVideos: currentVideoSummary()
+    });
     return firstUrl;
   }
 
@@ -1674,6 +1818,7 @@
   }
 
   async function tryUpscale() {
+    await chooseLeftVideoCandidateIfNeeded();
     const before = currentVideoUrl(false);
     let button =
       findClickableByTextOrLabel(["\uC5C5\uC2A4\uCF00\uC77C", "upscale", "\uACE0\uD654\uC9C8"]) ||
@@ -1695,8 +1840,18 @@
     }
 
     if (!button) {
-      status("업스케일 버튼 없음, 원본 다운로드 중지");
-      throw new Error("Upscale button was not found, so the scene was not downloaded.");
+      status("업스케일 버튼 없음, 원본 비디오 확인 중");
+      const fallbackUrl = newestPlayableVideoUrl(false, "");
+      if (fallbackUrl) {
+        debug("upscale unavailable; using generated video", {
+          videoChoicePrompt: videoChoicePromptVisible(),
+          fallbackUrl,
+          currentVideos: currentVideoSummary()
+        });
+        status("업스케일 버튼이 없어 원본 비디오를 저장합니다.");
+        return fallbackUrl;
+      }
+      throw new Error("Upscale button was not found, and no generated video was available to download.");
     }
 
     status("업스케일 시작");

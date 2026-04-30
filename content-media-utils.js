@@ -2,7 +2,7 @@
   if (window.GrokAutoMediaUtils) return;
 
   function downloadableImageUrl(url = "") {
-    return /^https?:/i.test(url) && /\/generated\/|assets\.grok\.com\/users|imagine-public\.x\.ai/i.test(url);
+    return /^https?:/i.test(url) && imageUrlLooksGenerated(url);
   }
 
   function imageUrlLooksLikeAsset(url = "") {
@@ -55,7 +55,11 @@
   }
 
   function imageUrlLooksGenerated(url = "") {
-    return /\/generated\/|assets\.grok\.com\/users|imagine-public\.x\.ai/i.test(url);
+    return /\/generated\/|imagine-public\.x\.ai/i.test(url);
+  }
+
+  function imageUrlLooksReferenceUpload(url = "") {
+    return /^https?:\/\/assets\.grok\.com\/users\/[^?#]+\/[^?#]+\/content(?:[?#]|$)/i.test(url) && !imageUrlLooksGenerated(url);
   }
 
   function inlineImageUrlLooksResult(url = "") {
@@ -151,6 +155,7 @@
     imageUrlLooksPreviewOnly,
     cardLooksLargeEnoughForDirectPreview,
     imageUrlLooksGenerated,
+    imageUrlLooksReferenceUpload,
     inlineImageUrlLooksResult,
     imageItemLooksFinal,
     imageExtensionForUrl,
