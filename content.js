@@ -1,5 +1,5 @@
 (() => {
-  const SCRIPT_VERSION = "2026-04-30-video-choice-v57";
+  const SCRIPT_VERSION = "2026-05-02-reference-filmstrip-v62";
   const DEBUG = false;
   const OVERLAY_PROGRESS_HIDE_MS = 2500;
   const OVERLAY_SUCCESS_HIDE_MS = 4000;
@@ -1202,19 +1202,37 @@
 
     if (!items.length) return false;
 
+    const target = items[Math.min(Math.max(preferIndex, 0), items.length - 1)];
     const selected = items.find((item) => {
       const className = String(item.button.className || "");
       return item.button.getAttribute("tabindex") === "0" || /\bring-white\b/.test(className);
     });
-    if (selected) return true;
+    if (selected?.button === target.button || mediaUrlKey(selected?.url) === mediaUrlKey(target.url)) return true;
 
-    const target = items[Math.min(Math.max(preferIndex, 0), items.length - 1)];
     click(target.button);
-    await waitFor(() => {
+    const matched = await waitFor(() => {
+      const className = String(target.button.className || "");
+      const targetSelected = target.button.getAttribute("tabindex") === "0" || /\bring-white\b/.test(className);
+      if (targetSelected) return true;
       const detailImage = findDetailMainImage();
-      return detailImage && imageUrlLooksGenerated(detailImage.url) ? detailImage : null;
+      return detailImage && mediaUrlKey(detailImage.url) === mediaUrlKey(target.url) ? detailImage : null;
     }, 3_000, "generated filmstrip image").catch(() => null);
-    return true;
+    return Boolean(matched);
+  }
+
+  function detailImageMatchesExpected(detailImage, expectedImageKey = "", allowOpaqueUrl = true) {
+    if (!detailImage?.url) return false;
+    if (!expectedImageKey) return true;
+    if (allowOpaqueUrl && (/^data:image\/|^blob:/i.test(detailImage.url) || imageUrlLooksGenerated(detailImage.url))) {
+      return true;
+    }
+    return mediaUrlKey(detailImage.url) === expectedImageKey;
+  }
+
+  function expectedGeneratedImageKey(item = {}) {
+    const url = item.sourceUrl || item.url || "";
+    if (!/^https?:|^data:image\/|^blob:/i.test(url)) return "";
+    return mediaUrlKey(url);
   }
 
   function findDetailMainImage() {
@@ -1288,9 +1306,10 @@
 
   async function openDetailDownloadButton(card) {
     if (isImaginePostDetailPage()) {
-      await ensureGeneratedFilmstripSelection(card?.index || 0);
+      const filmstripSelected = await ensureGeneratedFilmstripSelection(card?.index || 0);
       const existingDetailImage = findDetailMainImage();
-      if (existingDetailImage) return existingDetailImage;
+      const expectedImageKey = expectedGeneratedImageKey(card);
+      if (detailImageMatchesExpected(existingDetailImage, expectedImageKey, filmstripSelected)) return existingDetailImage;
     }
 
     const openTarget = clickableResultTarget(card);
@@ -1342,9 +1361,16 @@
 
   async function downloadImageViaDetail(itemOrIndex, filename) {
     const index = typeof itemOrIndex === "number" ? itemOrIndex : itemOrIndex?.index || 0;
+    const expectedImageKey =
+      typeof itemOrIndex === "object" && itemOrIndex
+        ? expectedGeneratedImageKey(itemOrIndex)
+        : "";
     if (isImaginePostDetailPage()) {
       await ensureGeneratedFilmstripSelection(index);
-      const existingDetailImage = await waitFor(() => findDetailMainImage(), 8_000, "current detail image").catch(() => null);
+      const existingDetailImage = await waitFor(() => {
+        const detailImage = findDetailMainImage();
+        return detailImageMatchesExpected(detailImage, expectedImageKey, true) ? detailImage : null;
+      }, 8_000, "current detail image").catch(() => null);
       if (existingDetailImage?.url) {
         const directFilename = filenameWithImageExtension(filename, existingDetailImage.url);
         status(`이미지를 저장하는 중입니다.\n${directFilename}`);
@@ -1377,9 +1403,13 @@
       await ensureGeneratedFilmstripSelection(index);
     }
     const button = opened instanceof Element ? opened : findDetailDownloadButton();
-    const detailImage = opened?.url
+    const openedMatchesExpected = detailImageMatchesExpected(opened, expectedImageKey, true);
+    const detailImage = openedMatchesExpected
       ? opened
-      : await waitFor(() => findDetailMainImage(), 8_000, "detail image for direct download").catch(() => null);
+      : await waitFor(() => {
+          const found = findDetailMainImage();
+          return detailImageMatchesExpected(found, expectedImageKey, true) ? found : null;
+        }, 8_000, "detail image for direct download").catch(() => null);
     if (detailImage?.url) {
       const directFilename = filenameWithImageExtension(filename, detailImage.url);
       status(`이미지를 저장하는 중입니다.\n${directFilename}`);

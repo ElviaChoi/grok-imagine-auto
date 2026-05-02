@@ -587,6 +587,7 @@ async function buildScenes() {
   const scenes = [];
   const sourceType = getSegmentedValue("sourceType");
   const requiresImage = sourceType !== "promptOnly";
+  let hasReferenceImage = false;
 
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
@@ -596,9 +597,6 @@ async function buildScenes() {
     if (!file && !prompt) {
       continue;
     }
-    if (requiresImage && !file) {
-      throw new Error(`장면 ${index + 1}에 이미지가 없습니다.`);
-    }
     if (!prompt) {
       throw new Error(`장면 ${index + 1}에 프롬프트가 없습니다.`);
     }
@@ -606,6 +604,7 @@ async function buildScenes() {
     const scene = { prompt };
 
     if (file && requiresImage) {
+      hasReferenceImage = true;
       scene.image = {
         id: await storeImagePayload(file),
         name: file.name,
@@ -622,6 +621,10 @@ async function buildScenes() {
         ? "실행할 장면이 없습니다. 이미지와 프롬프트를 넣어 주세요."
         : "실행할 장면이 없습니다. 프롬프트를 넣어 주세요."
     );
+  }
+
+  if (requiresImage && !hasReferenceImage) {
+    throw new Error("이미지+프롬프트 모드에서는 최소 1개의 참조 이미지가 필요합니다.");
   }
 
   return scenes;
