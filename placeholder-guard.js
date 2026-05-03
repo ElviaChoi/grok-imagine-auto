@@ -49,17 +49,37 @@
     return null;
   }
 
+  async function blobLooksLikeKnownPlaceholderPng(blob) {
+    if (!blob || blob.size > 60_000) return false;
+    let bytes;
+    try {
+      bytes = new Uint8Array(await blob.slice(0, 24).arrayBuffer());
+    } catch {
+      return false;
+    }
+    const pngSignature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+    if (!pngSignature.every((value, index) => bytes[index] === value)) return false;
+    const view = new DataView(bytes.buffer);
+    const width = view.getUint32(16);
+    const height = view.getUint32(20);
+    return width >= 700 && width <= 760 && height >= 380 && height <= 420;
+  }
+
   async function imageBlobLooksLikeBlackDotPlaceholder(blob, options = {}) {
     const maxBlobSize = options.maxBlobSize || DEFAULT_MAX_BLOB_SIZE;
     if (!blob || blob.size > maxBlobSize) return false;
-    if (!/^image\/(?:png|jpe?g|webp)$/i.test(blob.type || "image/png")) return false;
+    const blobType = String(blob.type || "").toLowerCase();
+    if (blobType && !/^image\/(?:png|jpe?g|webp)$/.test(blobType) && blobType !== "application/octet-stream") {
+      return false;
+    }
 
     let decoded;
     try {
       decoded = await decodedImageFromBlob(blob);
     } catch {
-      return false;
+      return blobLooksLikeKnownPlaceholderPng(blob);
     }
+    if (!decoded && await blobLooksLikeKnownPlaceholderPng(blob)) return true;
     if (!decoded) return false;
 
     try {

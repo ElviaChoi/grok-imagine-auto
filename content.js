@@ -1,5 +1,5 @@
 (() => {
-  const SCRIPT_VERSION = "2026-05-03-placeholder-guard-split-v69";
+  const SCRIPT_VERSION = "2026-05-04-placeholder-mime-v70";
   const DEBUG = false;
   const OVERLAY_PROGRESS_HIDE_MS = 2500;
   const OVERLAY_SUCCESS_HIDE_MS = 4000;

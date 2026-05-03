@@ -22,7 +22,7 @@ const pendingFilenames = new Map();
 const pendingExtensionDownloads = new Map();
 const nativeDownloadWatches = new Map();
 const IMAGE_PAYLOAD_PREFIX = "grokVideoAutoImage:";
-const BACKGROUND_VERSION = "2026-05-03-react-choice-event-v8";
+const BACKGROUND_VERSION = "2026-05-04-placeholder-mime-v9";
 let filenameListenerReleaseTimer = null;
 
 async function pruneImagePayloads() {
