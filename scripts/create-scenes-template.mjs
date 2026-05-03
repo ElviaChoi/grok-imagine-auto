@@ -14,7 +14,7 @@ guide.showGridLines = false;
 
 scenes.getRange("A1:B1").values = [["image", "prompt"]];
 scenes.getRange("A2:B21").values = Array.from({ length: 20 }, (_, index) => {
-  const number = String(index + 1).padStart(2, "0");
+  const number = String(index + 1).padStart(3, "0");
   return [
     `scene-${number}.png`,
     index < 3
@@ -56,7 +56,7 @@ guide.getRange("A1").format = {
 guide.getRange("A3:B10").values = [
   ["Step", "How to use"],
   ["1", "Fill the Scenes sheet. Use one row per scene."],
-  ["2", "Put the exact image file name in the image column, such as scene-01.png."],
+  ["2", "Put the exact image file name in the image column, such as scene-001.png."],
   ["3", "Put the Grok prompt in the prompt column."],
   ["4", "Save this workbook as CSV UTF-8, or copy the table into a CSV file."],
   ["5", "In the extension side panel, choose the CSV/TSV file and select all image files."],

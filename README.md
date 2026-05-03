@@ -61,9 +61,9 @@ Grok Imagine에서 여러 장면의 프롬프트와 참조 이미지를 순서�
 
 ```csv
 image,prompt
-scene-01.png,A calm cinematic shot of a quiet winter village
-scene-02.png,A woman walking through a snowy market at dawn
-scene-03.png,Steam rising from a large pot in a traditional kitchen
+scene-001.png,A calm cinematic shot of a quiet winter village
+scene-002.png,A woman walking through a snowy market at dawn
+scene-003.png,Steam rising from a large pot in a traditional kitchen
 ```
 
 주의할 점:
@@ -85,8 +85,8 @@ Downloads/Grok Videos
 파일명은 시작 번호, 접두어, 프롬프트 일부를 조합해 만듭니다.
 
 ```text
-01_grok-image_prompt-text.jpg
-02_grok-video_prompt-text.mp4
+001_grok-image_prompt-text.jpg
+002_grok-video_prompt-text.mp4
 ```
 
 ## 🔐 사용 권한

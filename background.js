@@ -16,7 +16,7 @@ const pendingFilenames = new Map();
 const pendingExtensionDownloads = new Map();
 const nativeDownloadWatches = new Map();
 const IMAGE_PAYLOAD_PREFIX = "grokVideoAutoImage:";
-const BACKGROUND_VERSION = "2026-04-22-direct-image-v4";
+const BACKGROUND_VERSION = "2026-05-03-video-choice-main-v5";
 let filenameListenerReleaseTimer = null;
 
 async function pruneImagePayloads() {
@@ -181,6 +181,80 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       manifestVersion: chrome.runtime.getManifest().version
     });
     return false;
+  }
+
+  if (message?.type === "GROK_AUTO_CLICK_VIDEO_CHOICE_MAIN") {
+    if (!sender.tab?.id) {
+      sendResponse({ ok: false, error: "No active Grok tab was found." });
+      return false;
+    }
+
+    chrome.scripting.executeScript({
+      target: { tabId: sender.tab.id },
+      world: "MAIN",
+      func: () => {
+        const visible = (el) => {
+          if (!el) return false;
+          const style = getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+        };
+        const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+        const buttons = [...document.querySelectorAll("button")]
+          .filter(visible)
+          .filter((button) => {
+            const text = normalize(`${button.getAttribute("aria-label") || ""} ${button.innerText || button.textContent || ""}`);
+            return text.includes("선호") || text.includes("prefer");
+          })
+          .map((button) => {
+            const card = button.closest(".group") || button.closest("article") || button;
+            const rect = card.getBoundingClientRect();
+            return { button, card, left: rect.left, top: rect.top, area: rect.width * rect.height };
+          })
+          .filter((item) => item.area > 20_000)
+          .sort((a, b) => {
+            const rowDelta = a.top - b.top;
+            if (Math.abs(rowDelta) > 32) return rowDelta;
+            return a.left - b.left;
+          });
+
+        const target = buttons[0];
+        if (!target?.button) return { clicked: false, reason: "button-not-found" };
+
+        const event = {
+          currentTarget: target.button,
+          target: target.button,
+          nativeEvent: {},
+          preventDefault() {},
+          stopPropagation() {},
+          isDefaultPrevented: () => false,
+          isPropagationStopped: () => false
+        };
+        const callReactHandlers = (el) => {
+          let calls = 0;
+          for (const key of Object.keys(el || {})) {
+            if (!key.startsWith("__reactProps$")) continue;
+            const props = el[key];
+            for (const name of ["onPointerDown", "onMouseDown", "onClick", "onMouseUp", "onPointerUp"]) {
+              if (typeof props?.[name] === "function") {
+                props[name](event);
+                calls += 1;
+              }
+            }
+          }
+          return calls;
+        };
+
+        target.button.scrollIntoView({ block: "center", inline: "center" });
+        target.button.focus?.();
+        target.button.click?.();
+        const calls = callReactHandlers(target.button) + callReactHandlers(target.card);
+        return { clicked: true, reactCalls: calls };
+      }
+    })
+      .then((results) => sendResponse({ ok: true, result: results?.[0]?.result || null }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
   }
 
   if (message?.type === "GROK_AUTO_STORE_IMAGE_PAYLOAD") {

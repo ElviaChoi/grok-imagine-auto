@@ -1,5 +1,5 @@
 (() => {
-  const SCRIPT_VERSION = "2026-05-02-reference-filmstrip-v62";
+  const SCRIPT_VERSION = "2026-05-03-video-choice-main-v68";
   const DEBUG = false;
   const OVERLAY_PROGRESS_HIDE_MS = 2500;
   const OVERLAY_SUCCESS_HIDE_MS = 4000;
@@ -1751,7 +1751,7 @@
 
   function videoChoicePromptVisible() {
     const text = normalize(document.body?.innerText || document.body?.textContent);
-    return /어떤 동영상을 남겨두고 싶으신가요|which video/i.test(text);
+    return text.includes("\uC5B4\uB5A4 \uB3D9\uC601\uC0C1\uC744 \uB0A8\uACA8\uB450\uACE0 \uC2F6\uC73C\uC2E0\uAC00\uC694") || /which video/i.test(text);
   }
 
   function videoChoiceButtons() {
@@ -1783,8 +1783,51 @@
       });
   }
 
+  function videoChoiceStillOpen() {
+    return videoChoicePromptVisible() && videoChoiceButtons().length >= 2;
+  }
+
+  async function clickVideoChoiceTarget(choice) {
+    if (!choice?.button) return false;
+    const buttonRect = choice.button.getBoundingClientRect();
+    const cardRect = choice.card?.getBoundingClientRect?.();
+    choice.button.focus?.();
+    click(choice.button);
+    choice.button.click?.();
+    choice.button.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true }));
+    choice.button.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", bubbles: true, cancelable: true }));
+    choice.button.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true }));
+    choice.button.dispatchEvent(new KeyboardEvent("keyup", { key: " ", code: "Space", bubbles: true, cancelable: true }));
+    clickAt(choice.button, 0.72, 0.5);
+    if (choice.card && cardRect?.width && cardRect?.height && buttonRect.width && buttonRect.height) {
+      const xRatio = ((buttonRect.left + buttonRect.width / 2) - cardRect.left) / cardRect.width;
+      const yRatio = ((buttonRect.top + buttonRect.height / 2) - cardRect.top) / cardRect.height;
+      clickAt(choice.card, Math.max(0.02, Math.min(0.98, xRatio)), Math.max(0.02, Math.min(0.98, yRatio)));
+    }
+    if (choice.video) {
+      clickAt(choice.video, 0.5, 0.5);
+      choice.video.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+    }
+    if (choice.card) {
+      clickAt(choice.card, 0.5, 0.5);
+      clickAt(choice.card, 0.08, 0.88);
+      choice.card.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+    }
+    await chrome.runtime.sendMessage({ type: "GROK_AUTO_CLICK_VIDEO_CHOICE_MAIN" }).catch((error) => {
+      debug("main-world video choice click failed", { error: error.message });
+      return null;
+    });
+    return true;
+  }
+
   async function chooseLeftVideoCandidateIfNeeded() {
-    const choices = videoChoiceButtons();
+    let choices = videoChoiceButtons();
+    if (choices.length < 2 && videoChoicePromptVisible()) {
+      choices = await waitFor(() => {
+        const found = videoChoiceButtons();
+        return found.length >= 2 ? found : null;
+      }, 5_000, "video choice buttons");
+    }
     if (choices.length < 2) return false;
     const target = choices[0];
     const before = newestPlayableVideoUrl(false, "");
@@ -1797,21 +1840,43 @@
       }))
     });
     status("비디오 선택 화면에서 왼쪽 결과를 선택합니다.");
-    click(target.button);
-    await waitFor(() => {
-      const choiceGone = videoChoiceButtons().length < 2;
-      const url = newestPlayableVideoUrl(false, "");
-      return choiceGone && url ? url : null;
-    }, 15_000, "video choice selection").catch(() => null);
+    let selectedUrl = "";
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      const freshTarget = videoChoiceButtons()[0] || target;
+      await clickVideoChoiceTarget(freshTarget);
+      selectedUrl = await waitFor(() => {
+        const choiceGone = !videoChoicePromptVisible() || videoChoiceButtons().length < 2;
+        const url = newestPlayableVideoUrl(false, "");
+        return choiceGone ? (url || true) : null;
+      }, 7_000, `video choice selection attempt ${attempt}`).catch(() => "");
+      if (selectedUrl) break;
+      await sleep(500);
+    }
+    if (!selectedUrl) {
+      throw new Error("Video choice screen did not accept the left preference click.");
+    }
     await sleep(1200);
+    debug("video choice selected", { selectedUrl });
     return true;
   }
 
   async function waitForStableVideo(preferHd, previousUrl, timeoutMs, label) {
-    const video = await waitFor(() => {
+    const started = Date.now();
+    let video = null;
+    while (Date.now() - started < timeoutMs) {
+      assertNotStopped();
+      if (videoChoiceStillOpen()) {
+        await chooseLeftVideoCandidateIfNeeded();
+        continue;
+      }
       const candidate = currentVideoElement(preferHd);
-      return playable(candidate, previousUrl) ? candidate : null;
-    }, timeoutMs, label);
+      if (playable(candidate, previousUrl)) {
+        video = candidate;
+        break;
+      }
+      await sleep(500);
+    }
+    if (!video) throw new Error(`${label} timed out.`);
 
     const firstUrl = videoUrl(video);
     await sleep(2500);
@@ -1870,6 +1935,9 @@
     }
 
     if (!button) {
+      if (videoChoiceStillOpen()) {
+        throw new Error("Video choice screen is still open, so upscale cannot start. The original video was not downloaded.");
+      }
       status("업스케일 버튼 없음, 원본 비디오 확인 중");
       const fallbackUrl = newestPlayableVideoUrl(false, "");
       if (fallbackUrl) {
@@ -1900,6 +1968,102 @@
     }
   }
 
+  async function decodedImageFromBlob(blob) {
+    if (typeof createImageBitmap === "function") {
+      const bitmap = await createImageBitmap(blob);
+      return {
+        image: bitmap,
+        width: bitmap.width,
+        height: bitmap.height,
+        close: () => bitmap.close?.()
+      };
+    }
+
+    const objectUrl = URL.createObjectURL(blob);
+    const image = new Image();
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = reject;
+      image.src = objectUrl;
+    });
+    return {
+      image,
+      width: image.naturalWidth || image.width,
+      height: image.naturalHeight || image.height,
+      close: () => URL.revokeObjectURL(objectUrl)
+    };
+  }
+
+  async function imageLooksLikeBlackDotPlaceholder(url) {
+    if (!/^data:image\/|^blob:/i.test(url)) return false;
+
+    let blob;
+    try {
+      const response = await fetch(url);
+      blob = await response.blob();
+    } catch {
+      return false;
+    }
+
+    if (!/^image\/(?:png|jpe?g|webp)$/i.test(blob.type || "image/png")) return false;
+    if (blob.size > 180_000) return false;
+
+    let decoded;
+    try {
+      decoded = await decodedImageFromBlob(blob);
+    } catch {
+      return false;
+    }
+
+    try {
+      if (decoded.width < 300 || decoded.height < 180) return false;
+
+      const canvas = document.createElement("canvas");
+      canvas.width = 96;
+      canvas.height = 64;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (!ctx) return false;
+
+      ctx.drawImage(decoded.image, 0, 0, canvas.width, canvas.height);
+      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      let dark = 0;
+      let lightNeutral = 0;
+      let saturated = 0;
+      let mid = 0;
+      let total = 0;
+
+      for (let i = 0; i < pixels.length; i += 4) {
+        if (pixels[i + 3] < 16) continue;
+        const r = pixels[i];
+        const g = pixels[i + 1];
+        const b = pixels[i + 2];
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        total += 1;
+        if (lum < 35 && max - min < 30) {
+          dark += 1;
+        } else if (lum > 180 && max - min < 45) {
+          lightNeutral += 1;
+        } else if (max - min > 60 && lum > 40) {
+          saturated += 1;
+        } else {
+          mid += 1;
+        }
+      }
+
+      if (!total) return false;
+      const darkRatio = dark / total;
+      const lightRatio = lightNeutral / total;
+      const saturatedRatio = saturated / total;
+      const midRatio = mid / total;
+
+      return darkRatio > 0.82 && lightRatio > 0.04 && lightRatio < 0.18 && saturatedRatio < 0.01 && midRatio < 0.05;
+    } finally {
+      decoded.close();
+    }
+  }
+
   async function downloadMedia(url, filename) {
     if (!url) {
       throw new Error("Could not find a media URL to download.");
@@ -1909,6 +2073,11 @@
     }
     if (!/^https?:|^data:image\//i.test(url)) {
       throw new Error("Generated media is still a temporary preview URL. Please retry this scene after the final URL appears.");
+    }
+    if (await imageLooksLikeBlackDotPlaceholder(url)) {
+      throw new Error(
+        "Grok returned a loading placeholder image instead of the generated result, so the file was not downloaded. Please retry this scene after the final image appears."
+      );
     }
     await loadDownloadedUrls();
     const downloadKey = mediaUrlKey(url);
@@ -1997,7 +2166,7 @@
 
         const scene = scenes[i];
         const number = startIndex + i;
-        const padded = String(number).padStart(2, "0");
+        const padded = String(number).padStart(3, "0");
         const total = scenes.length;
         const sceneLabel = `장면 ${i + 1}/${total}`;
 
