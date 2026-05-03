@@ -22,7 +22,7 @@ const pendingFilenames = new Map();
 const pendingExtensionDownloads = new Map();
 const nativeDownloadWatches = new Map();
 const IMAGE_PAYLOAD_PREFIX = "grokVideoAutoImage:";
-const BACKGROUND_VERSION = "2026-05-03-placeholder-guard-split-v7";
+const BACKGROUND_VERSION = "2026-05-03-react-choice-event-v8";
 let filenameListenerReleaseTimer = null;
 
 async function pruneImagePayloads() {
@@ -230,32 +230,55 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const event = {
           currentTarget: target.button,
           target: target.button,
-          nativeEvent: {},
+          nativeEvent: {
+            currentTarget: target.button,
+            target: target.button,
+            composedPath: () => [target.button, target.card, document.body, document]
+          },
           preventDefault() {},
           stopPropagation() {},
           isDefaultPrevented: () => false,
-          isPropagationStopped: () => false
+          isPropagationStopped: () => false,
+          closest: (...args) => target.button.closest(...args),
+          getAttribute: (...args) => target.button.getAttribute(...args),
+          matches: (...args) => target.button.matches(...args)
         };
         const callReactHandlers = (el) => {
           let calls = 0;
+          let errors = 0;
           for (const key of Object.keys(el || {})) {
             if (!key.startsWith("__reactProps$")) continue;
             const props = el[key];
             for (const name of ["onPointerDown", "onMouseDown", "onClick", "onMouseUp", "onPointerUp"]) {
               if (typeof props?.[name] === "function") {
-                props[name](event);
-                calls += 1;
+                try {
+                  props[name](event);
+                  calls += 1;
+                } catch {
+                  errors += 1;
+                  try {
+                    props[name](target.button);
+                    calls += 1;
+                  } catch {
+                    errors += 1;
+                  }
+                }
               }
             }
           }
-          return calls;
+          return { calls, errors };
         };
 
         target.button.scrollIntoView({ block: "center", inline: "center" });
         target.button.focus?.();
         target.button.click?.();
-        const calls = callReactHandlers(target.button) + callReactHandlers(target.card);
-        return { clicked: true, reactCalls: calls };
+        const buttonResult = callReactHandlers(target.button);
+        const cardResult = callReactHandlers(target.card);
+        return {
+          clicked: true,
+          reactCalls: buttonResult.calls + cardResult.calls,
+          reactErrors: buttonResult.errors + cardResult.errors
+        };
       }
     })
       .then((results) => sendResponse({ ok: true, result: results?.[0]?.result || null }))
