@@ -40,6 +40,7 @@
         "content-shared.js",
         "content-dom-utils.js",
         "content-media-utils.js",
+        "placeholder-guard.js",
         "content.js"
       ],
       "run_at": "document_idle"
