@@ -6,6 +6,7 @@ Thumbs.db
 
 # Logs
 *.log
+*.bak
 
 # Local development dependencies
 node_modules/
