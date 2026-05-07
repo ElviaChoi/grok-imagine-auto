@@ -168,8 +168,12 @@ function createSceneRow(index, prompt = "") {
 }
 
 function setSceneImage(row, file) {
-  if (!file) return;
   const input = row.querySelector(".scene-image");
+  if (!file) {
+    input.value = "";
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return;
+  }
   const dt = new DataTransfer();
   dt.items.add(file);
   input.files = dt.files;
@@ -415,7 +419,7 @@ async function importScenesFromTable() {
     const row = sceneList.lastElementChild;
     const matchedFile = item.imageName
       ? imageMap.get(fileKey(item.imageName)) || imageMap.get(fileStemKey(item.imageName))
-      : imageFiles[index];
+      : null;
     setSceneImage(row, matchedFile);
   });
 
@@ -424,10 +428,8 @@ async function importScenesFromTable() {
   await saveSettings();
 
   const matchedCount = [...sceneList.querySelectorAll(".scene-image")].filter((input) => input.files[0]).length;
-  const unmatchedCount = imported.length - matchedCount;
   setStatus(
-    `${imported.length}개 장면을 불러왔습니다. 이미지 매칭: ${matchedCount}/${imported.length}` +
-      (unmatchedCount ? `\n매칭되지 않은 이미지 ${unmatchedCount}개가 있습니다. image 열의 파일명을 확인해 주세요.` : "")
+    `${imported.length}개 장면을 불러왔습니다. 이미지 매칭: ${matchedCount}/${imported.length}`
   );
 }
 
