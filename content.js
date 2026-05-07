@@ -1,5 +1,5 @@
 (() => {
-  const SCRIPT_VERSION = "2026-05-07-submit-resume-v71";
+  const SCRIPT_VERSION = "2026-05-07-video-choice-v72";
   const DEBUG = false;
   const OVERLAY_PROGRESS_HIDE_MS = 2500;
   const OVERLAY_SUCCESS_HIDE_MS = 4000;
@@ -1887,6 +1887,12 @@
     const buttonRect = choice.button.getBoundingClientRect();
     const cardRect = choice.card?.getBoundingClientRect?.();
     choice.button.focus?.();
+    await chrome.runtime.sendMessage({ type: "GROK_AUTO_CLICK_VIDEO_CHOICE_MAIN" }).catch((error) => {
+      debug("main-world video choice click failed", { error: error.message });
+      return null;
+    });
+    await sleep(350);
+    if (!videoChoiceStillOpen()) return true;
     click(choice.button);
     choice.button.click?.();
     choice.button.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true }));
@@ -1899,19 +1905,6 @@
       const yRatio = ((buttonRect.top + buttonRect.height / 2) - cardRect.top) / cardRect.height;
       clickAt(choice.card, Math.max(0.02, Math.min(0.98, xRatio)), Math.max(0.02, Math.min(0.98, yRatio)));
     }
-    if (choice.video) {
-      clickAt(choice.video, 0.5, 0.5);
-      choice.video.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
-    }
-    if (choice.card) {
-      clickAt(choice.card, 0.5, 0.5);
-      clickAt(choice.card, 0.08, 0.88);
-      choice.card.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
-    }
-    await chrome.runtime.sendMessage({ type: "GROK_AUTO_CLICK_VIDEO_CHOICE_MAIN" }).catch((error) => {
-      debug("main-world video choice click failed", { error: error.message });
-      return null;
-    });
     return true;
   }
 

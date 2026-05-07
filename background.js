@@ -22,7 +22,7 @@ const pendingFilenames = new Map();
 const pendingExtensionDownloads = new Map();
 const nativeDownloadWatches = new Map();
 const IMAGE_PAYLOAD_PREFIX = "grokVideoAutoImage:";
-const BACKGROUND_VERSION = "2026-05-04-placeholder-mime-v9";
+const BACKGROUND_VERSION = "2026-05-07-video-choice-v10";
 let filenameListenerReleaseTimer = null;
 
 async function pruneImagePayloads() {
@@ -210,14 +210,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           .filter(visible)
           .filter((button) => {
             const text = normalize(`${button.getAttribute("aria-label") || ""} ${button.innerText || button.textContent || ""}`);
-            return text.includes("선호") || text.includes("prefer");
+            return text.includes("\uC120\uD638") || text.includes("prefer");
           })
           .map((button) => {
             const card = button.closest(".group") || button.closest("article") || button;
             const rect = card.getBoundingClientRect();
-            return { button, card, left: rect.left, top: rect.top, area: rect.width * rect.height };
+            const video = card.querySelector("video");
+            return { button, card, video, left: rect.left, top: rect.top, area: rect.width * rect.height };
           })
-          .filter((item) => item.area > 20_000)
+          .filter((item) => item.area > 20_000 || item.video)
           .sort((a, b) => {
             const rowDelta = a.top - b.top;
             if (Math.abs(rowDelta) > 32) return rowDelta;
@@ -227,57 +228,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const target = buttons[0];
         if (!target?.button) return { clicked: false, reason: "button-not-found" };
 
-        const event = {
-          currentTarget: target.button,
-          target: target.button,
-          nativeEvent: {
-            currentTarget: target.button,
-            target: target.button,
-            composedPath: () => [target.button, target.card, document.body, document]
-          },
-          preventDefault() {},
-          stopPropagation() {},
-          isDefaultPrevented: () => false,
-          isPropagationStopped: () => false,
-          closest: (...args) => target.button.closest(...args),
-          getAttribute: (...args) => target.button.getAttribute(...args),
-          matches: (...args) => target.button.matches(...args)
-        };
-        const callReactHandlers = (el) => {
-          let calls = 0;
-          let errors = 0;
-          for (const key of Object.keys(el || {})) {
-            if (!key.startsWith("__reactProps$")) continue;
-            const props = el[key];
-            for (const name of ["onPointerDown", "onMouseDown", "onClick", "onMouseUp", "onPointerUp"]) {
-              if (typeof props?.[name] === "function") {
-                try {
-                  props[name](event);
-                  calls += 1;
-                } catch {
-                  errors += 1;
-                  try {
-                    props[name](target.button);
-                    calls += 1;
-                  } catch {
-                    errors += 1;
-                  }
-                }
-              }
-            }
-          }
-          return { calls, errors };
+        const clickElement = (el) => {
+          if (!el) return false;
+          el.scrollIntoView({ block: "center", inline: "center" });
+          const rect = el.getBoundingClientRect();
+          const x = Math.max(1, Math.min(window.innerWidth - 1, rect.left + rect.width / 2));
+          const y = Math.max(1, Math.min(window.innerHeight - 1, rect.top + rect.height / 2));
+          const eventInit = { bubbles: true, cancelable: true, clientX: x, clientY: y, view: window };
+          const pointTarget = document.elementFromPoint(x, y);
+          const clickTarget = pointTarget && (pointTarget === el || el.contains(pointTarget)) ? pointTarget : el;
+
+          clickTarget.dispatchEvent(new PointerEvent("pointerover", { ...eventInit, pointerId: 1, pointerType: "mouse" }));
+          clickTarget.dispatchEvent(new PointerEvent("pointerenter", { ...eventInit, pointerId: 1, pointerType: "mouse" }));
+          clickTarget.dispatchEvent(new PointerEvent("pointerdown", { ...eventInit, pointerId: 1, pointerType: "mouse", buttons: 1 }));
+          clickTarget.dispatchEvent(new MouseEvent("mouseover", eventInit));
+          clickTarget.dispatchEvent(new MouseEvent("mouseenter", eventInit));
+          clickTarget.dispatchEvent(new MouseEvent("mousedown", eventInit));
+          clickTarget.dispatchEvent(new PointerEvent("pointerup", { ...eventInit, pointerId: 1, pointerType: "mouse" }));
+          clickTarget.dispatchEvent(new MouseEvent("mouseup", eventInit));
+          clickTarget.dispatchEvent(new MouseEvent("click", eventInit));
+          if (typeof clickTarget.click === "function") clickTarget.click();
+          if (clickTarget !== el && typeof el.click === "function") el.click();
+          return true;
         };
 
-        target.button.scrollIntoView({ block: "center", inline: "center" });
         target.button.focus?.();
-        target.button.click?.();
-        const buttonResult = callReactHandlers(target.button);
-        const cardResult = callReactHandlers(target.card);
+        clickElement(target.button);
         return {
           clicked: true,
-          reactCalls: buttonResult.calls + cardResult.calls,
-          reactErrors: buttonResult.errors + cardResult.errors
+          left: Math.round(target.left),
+          top: Math.round(target.top)
         };
       }
     })
