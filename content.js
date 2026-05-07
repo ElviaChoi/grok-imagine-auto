@@ -1,5 +1,5 @@
 (() => {
-  const SCRIPT_VERSION = "2026-05-04-placeholder-mime-v70";
+  const SCRIPT_VERSION = "2026-05-07-submit-resume-v71";
   const DEBUG = false;
   const OVERLAY_PROGRESS_HIDE_MS = 2500;
   const OVERLAY_SUCCESS_HIDE_MS = 4000;
@@ -284,6 +284,53 @@
     return editor?.closest(".query-bar") || editor?.closest("form") || document;
   }
 
+  function buttonDisabled(button) {
+    return (
+      button.disabled ||
+      button.getAttribute("aria-disabled") === "true" ||
+      button.getAttribute("data-disabled") === "true"
+    );
+  }
+
+  function buttonLabel(button) {
+    return normalize(
+      [
+        button.getAttribute("aria-label"),
+        button.getAttribute("title"),
+        button.getAttribute("data-testid"),
+        button.innerText,
+        button.textContent
+      ]
+        .filter(Boolean)
+        .join(" ")
+    );
+  }
+
+  function buttonLooksLikePromptSubmit(button, searchRoot) {
+    if (button.closest("[role='menu'], [role='listbox'], [data-radix-popper-content-wrapper]")) return false;
+
+    const label = buttonLabel(button);
+    if (button.type === "submit" || /제출|전송|생성|submit|send|generate/i.test(label)) return true;
+
+    const queryRoot = button.closest(".query-bar, form");
+    if (!queryRoot) return false;
+    if (!button.querySelector("svg")) return false;
+    if (/이미지|비디오|image|video|480p|720p|6s|10s|agent|beta|\+|추가/i.test(label)) return false;
+
+    const buttonRect = button.getBoundingClientRect();
+    const rootRect =
+      searchRoot instanceof Element ? searchRoot.getBoundingClientRect() : queryRoot.getBoundingClientRect();
+    if (!rootRect.width || !rootRect.height) return false;
+
+    const centerX = buttonRect.left + buttonRect.width / 2;
+    const centerY = buttonRect.top + buttonRect.height / 2;
+    const inRightSide = centerX > rootRect.left + rootRect.width * 0.62;
+    const inLowerHalf = centerY > rootRect.top + rootRect.height * 0.45;
+    const submitSized = buttonRect.width >= 28 && buttonRect.width <= 80 && buttonRect.height >= 28 && buttonRect.height <= 80;
+
+    return inRightSide && inLowerHalf && submitSized;
+  }
+
   function onImagineHome() {
     return location.href.startsWith(IMAGINE_URL) && !/\/imagine\/(?!$|\?)/.test(location.pathname);
   }
@@ -304,15 +351,20 @@
         ].join(", ")
       )
     ]
+      .concat([...searchRoot.querySelectorAll(".query-bar button, form button")])
       .filter(visible)
       .filter((button) => {
-        if (!enabledOnly) return true;
-        if (button.disabled || button.getAttribute("aria-disabled") === "true") return false;
-        const label = normalize(button.getAttribute("aria-label"));
-        const text = normalize(button.innerText || button.textContent);
-        if (button.type === "submit" || /제출|submit|send/i.test(`${label} ${text}`)) return true;
-        if (button.closest("[role='menu'], [role='listbox'], [data-radix-popper-content-wrapper]")) return false;
-        return false;
+        if (enabledOnly && buttonDisabled(button)) return false;
+        return buttonLooksLikePromptSubmit(button, searchRoot);
+      })
+      .sort((a, b) => {
+        const aRect = a.getBoundingClientRect();
+        const bRect = b.getBoundingClientRect();
+        const aQuery = a.closest(".query-bar") ? 1 : 0;
+        const bQuery = b.closest(".query-bar") ? 1 : 0;
+        if (aQuery !== bQuery) return bQuery - aQuery;
+        if (aRect.right !== bRect.right) return bRect.right - aRect.right;
+        return bRect.bottom - aRect.bottom;
       });
 
     return candidates[0] || null;
@@ -1497,6 +1549,31 @@
     await sleep(1800);
   }
 
+  function composerAttachmentItems() {
+    const root = document.querySelector(".query-bar") || editorRoot(findPromptEditor());
+    if (!root || root === document) return [];
+    const rootRect = root.getBoundingClientRect();
+    return [...root.querySelectorAll("img, video, canvas")]
+      .filter(visible)
+      .filter((item) => !item.closest("#grok-auto-overlay, nav, aside, [role='navigation']"))
+      .filter((item) => {
+        const rect = item.getBoundingClientRect();
+        if (rect.width < 20 || rect.height < 20 || rect.width > 240 || rect.height > 240) return false;
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        return (
+          centerX >= rootRect.left &&
+          centerX <= rootRect.right &&
+          centerY >= rootRect.top &&
+          centerY <= rootRect.bottom
+        );
+      });
+  }
+
+  function composerHasAttachment() {
+    return composerAttachmentItems().length > 0;
+  }
+
   async function setPrompt(prompt) {
     const editor = await waitFor(() => findPromptEditor(), WAIT.page, "prompt editor");
     const expected = normalize(prompt);
@@ -1544,26 +1621,38 @@
     );
 
     await sleep(900);
-    const submit = await waitFor(
-      () => {
-        const latestEditor = editor?.isConnected ? editor : findPromptEditor();
-        return (
-          latestEditor &&
-          promptEditorText(latestEditor).includes(expected) &&
-          findSubmitButton(true, editorRoot(latestEditor))
-        );
-      },
-      5_000,
-      "prompt submit readiness"
-    );
+    let submit = null;
+    try {
+      submit = await waitFor(
+        () => {
+          const latestEditor = editor?.isConnected ? editor : findPromptEditor();
+          return (
+            latestEditor &&
+            promptEditorText(latestEditor).includes(expected) &&
+            findSubmitButton(true, editorRoot(latestEditor))
+          );
+        },
+        8_000,
+        "prompt submit readiness"
+      );
+    } catch (error) {
+      if (stopRequested) throw error;
+      debug("setPrompt submit readiness not confirmed", {
+        url: location.href,
+        editorText: promptEditorText(editor),
+        submitFound: Boolean(findSubmitButton(false, editorRoot(editor))),
+        submitEnabled: Boolean(findSubmitButton(true, editorRoot(editor))),
+        error: error?.message || String(error)
+      });
+    }
     status(`프롬프트 입력이 준비되었습니다.\n입력 길이: ${promptEditorText(editor).length}자`);
     debug("setPrompt ready", {
       method,
       url: location.href,
       editorText: promptEditorText(editor),
-      submitDisabled: submit.disabled,
-      submitAria: submit.getAttribute("aria-label"),
-      submitClass: submit.className,
+      submitDisabled: submit?.disabled,
+      submitAria: submit?.getAttribute("aria-label"),
+      submitClass: submit?.className,
       submitButton: submit,
       formText: normalize(editorRoot(editor)?.innerText || editorRoot(editor)?.textContent).slice(0, 240)
     });
@@ -2053,6 +2142,7 @@
     let currentPreviousUrl = resumeState?.previousUrl || "";
     let currentFinalMediaUrl = resumeState?.finalMediaUrl || "";
     let currentPreviousDetailKeys = resumeState?.previousDetailKeys || [];
+    let currentImageUploaded = Boolean(resumeState?.imageUploaded);
 
     try {
       for (let i = startAt; i < scenes.length; i += 1) {
@@ -2066,15 +2156,21 @@
         let previousDetailKeys = state?.previousDetailKeys || [];
         let phase = state?.phase || "start";
         let finalMediaUrl = state?.finalMediaUrl || "";
+        let imageUploaded = Boolean(state?.imageUploaded);
         let previousDetailMarker = "";
         currentPhase = phase;
         currentPreviousUrl = previousUrl;
         currentPreviousDetailKeys = previousDetailKeys;
         currentFinalMediaUrl = finalMediaUrl;
+        currentImageUploaded = imageUploaded;
 
-        await saveSession(payload, i, true, { phase, previousUrl, finalMediaUrl });
+        await saveSession(payload, i, true, { phase, previousUrl, finalMediaUrl, imageUploaded });
 
         const scene = scenes[i];
+        if (!scene.image) {
+          imageUploaded = false;
+          currentImageUploaded = false;
+        }
         const number = startIndex + i;
         const padded = String(number).padStart(3, "0");
         const total = scenes.length;
@@ -2095,13 +2191,22 @@
             generation.mode === "image" ? markExistingImageResultCards(`${payload.runId}:${i}:${Date.now()}`) : "";
           currentPreviousUrl = previousUrl;
           currentPreviousDetailKeys = previousDetailKeys;
-          await saveSession(payload, i, true, { phase: "editing", previousUrl, previousDetailKeys });
+          await saveSession(payload, i, true, { phase: "editing", previousUrl, previousDetailKeys, imageUploaded });
           currentPhase = "editing";
 
-          if (scene.image) {
+          if (scene.image && (imageUploaded || composerHasAttachment())) {
+            imageUploaded = true;
+            currentImageUploaded = true;
+            status(`${sceneLabel} · 이미 업로드된 이미지를 사용합니다.`);
+            await ensureGenerationSettings(generation);
+            await saveSession(payload, i, true, { phase: "editing", previousUrl, previousDetailKeys, imageUploaded });
+          } else if (scene.image) {
             status(`${sceneLabel} · 이미지를 업로드하는 중입니다.`);
             await uploadImage(scene.image);
+            imageUploaded = true;
+            currentImageUploaded = true;
             await ensureGenerationSettings(generation);
+            await saveSession(payload, i, true, { phase: "editing", previousUrl, previousDetailKeys, imageUploaded });
           } else {
             status(`${sceneLabel} · 프롬프트만 사용합니다.\n이미지 업로드는 건너뜁니다.`);
           }
@@ -2110,14 +2215,14 @@
           const promptEditor = await setPrompt(scene.prompt);
           phase = "submitting";
           currentPhase = phase;
-          await saveSession(payload, i, true, { phase, previousUrl, previousDetailKeys });
+          await saveSession(payload, i, true, { phase, previousUrl, previousDetailKeys, imageUploaded });
           await submitPrompt(promptEditor, {
             prompt: scene.prompt,
             requirePromptEcho: generation.mode !== "video"
           });
           phase = "submitted";
           currentPhase = phase;
-          await saveSession(payload, i, true, { phase, previousUrl, previousDetailKeys });
+          await saveSession(payload, i, true, { phase, previousUrl, previousDetailKeys, imageUploaded });
         }
 
         const isVideo = generation.mode === "video";
@@ -2188,7 +2293,7 @@
         }
 
         await releaseImagePayload(scene.image);
-        await saveSession(payload, i + 1, true, { phase: "ready", previousUrl: "" });
+        await saveSession(payload, i + 1, true, { phase: "ready", previousUrl: "", imageUploaded: false });
         status(`${sceneLabel} · 완료되었습니다.`);
 
         if (i < scenes.length - 1) {
@@ -2210,6 +2315,7 @@
           previousUrl: currentPreviousUrl,
           previousDetailKeys: currentPreviousDetailKeys,
           finalMediaUrl: currentFinalMediaUrl,
+          imageUploaded: currentImageUploaded,
           error: {
             message: error.message,
             phase: currentPhase,
@@ -2283,7 +2389,7 @@
     if (message?.type === "GROK_AUTO_RETRY_SCENE_V2") {
       recoverableSession()
         .then(async (session) => {
-          await saveSession(session.payload, session.nextIndex, true, { phase: "start", previousUrl: "" });
+          await saveSession(session.payload, session.nextIndex, true, { phase: "start", previousUrl: "", imageUploaded: false });
           return recoverableSession();
         })
         .then((session) => startFromSession(session))
@@ -2302,7 +2408,7 @@
             status("마지막 장면을 건너뛰었습니다. 더 실행할 장면이 없습니다.");
             return null;
           }
-          await saveSession(session.payload, nextIndex, true, { phase: "start", previousUrl: "" });
+          await saveSession(session.payload, nextIndex, true, { phase: "start", previousUrl: "", imageUploaded: false });
           return recoverableSession();
         })
         .then((session) => {
