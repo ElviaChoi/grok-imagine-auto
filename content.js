@@ -1,5 +1,5 @@
 (() => {
-  const SCRIPT_VERSION = "2026-05-07-video-choice-v72";
+  const SCRIPT_VERSION = "2026-05-12-image-detail-click-v73";
   const DEBUG = false;
   const OVERLAY_PROGRESS_HIDE_MS = 2500;
   const OVERLAY_SUCCESS_HIDE_MS = 4000;
@@ -1362,6 +1362,21 @@
       })[0] || null;
   }
 
+  async function clickImageResultInMainWorld(el, xRatio = 0.5, yRatio = 0.5) {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    const x = Math.max(1, Math.min(window.innerWidth - 1, rect.left + rect.width * xRatio));
+    const y = Math.max(1, Math.min(window.innerHeight - 1, rect.top + rect.height * yRatio));
+    const response = await chrome.runtime.sendMessage({
+      type: "GROK_AUTO_CLICK_IMAGE_RESULT_MAIN",
+      point: { x, y }
+    }).catch((error) => {
+      debug("main-world image result click failed", { error: error.message });
+      return null;
+    });
+    return Boolean(response?.ok && response?.result?.clicked);
+  }
+
   async function openDetailDownloadButton(card) {
     if (isImaginePostDetailPage()) {
       const filmstripSelected = await ensureGeneratedFilmstripSelection(card?.index || 0);
@@ -1391,7 +1406,11 @@
         { el: openTarget, x: 0.92, y: 0.18 }
       ].filter((target) => target.el);
       const target = targets[Math.min(attempt - 1, targets.length - 1)];
-      clickAt(target.el, target.x, target.y);
+      await clickImageResultInMainWorld(target.el, target.x, target.y);
+      await sleep(250);
+      if (!isImaginePostDetailPage() && location.href === beforeUrl) {
+        clickAt(target.el, target.x, target.y);
+      }
       if (/\/imagine\/saved(?:$|[/?#])/.test(location.href)) {
         history.back();
         await sleep(1000);

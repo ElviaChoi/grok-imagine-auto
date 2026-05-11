@@ -22,7 +22,7 @@ const pendingFilenames = new Map();
 const pendingExtensionDownloads = new Map();
 const nativeDownloadWatches = new Map();
 const IMAGE_PAYLOAD_PREFIX = "grokVideoAutoImage:";
-const BACKGROUND_VERSION = "2026-05-07-video-choice-v10";
+const BACKGROUND_VERSION = "2026-05-12-image-detail-click-v11";
 let filenameListenerReleaseTimer = null;
 
 async function pruneImagePayloads() {
@@ -259,6 +259,54 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           left: Math.round(target.left),
           top: Math.round(target.top)
         };
+      }
+    })
+      .then((results) => sendResponse({ ok: true, result: results?.[0]?.result || null }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.type === "GROK_AUTO_CLICK_IMAGE_RESULT_MAIN") {
+    if (!sender.tab?.id) {
+      sendResponse({ ok: false, error: "No active Grok tab was found." });
+      return false;
+    }
+
+    const point = message.point || {};
+    chrome.scripting.executeScript({
+      target: { tabId: sender.tab.id },
+      world: "MAIN",
+      args: [point],
+      func: ({ x, y }) => {
+        const clickAtPoint = (clientX, clientY) => {
+          const safeX = Math.max(1, Math.min(window.innerWidth - 1, Number(clientX) || 1));
+          const safeY = Math.max(1, Math.min(window.innerHeight - 1, Number(clientY) || 1));
+          const pointTarget = document.elementFromPoint(safeX, safeY);
+          const clickTarget =
+            pointTarget?.closest?.("a, button, [role='button'], [tabindex], [class*='cursor-pointer'], [class*='media-post-masonry-card'], [class*='group']") ||
+            pointTarget;
+          if (!clickTarget) return { clicked: false, reason: "target-not-found" };
+
+          const eventInit = { bubbles: true, cancelable: true, clientX: safeX, clientY: safeY, view: window };
+          clickTarget.dispatchEvent(new PointerEvent("pointerover", { ...eventInit, pointerId: 1, pointerType: "mouse" }));
+          clickTarget.dispatchEvent(new PointerEvent("pointerenter", { ...eventInit, pointerId: 1, pointerType: "mouse" }));
+          clickTarget.dispatchEvent(new PointerEvent("pointerdown", { ...eventInit, pointerId: 1, pointerType: "mouse", buttons: 1 }));
+          clickTarget.dispatchEvent(new MouseEvent("mouseover", eventInit));
+          clickTarget.dispatchEvent(new MouseEvent("mouseenter", eventInit));
+          clickTarget.dispatchEvent(new MouseEvent("mousedown", eventInit));
+          clickTarget.dispatchEvent(new PointerEvent("pointerup", { ...eventInit, pointerId: 1, pointerType: "mouse" }));
+          clickTarget.dispatchEvent(new MouseEvent("mouseup", eventInit));
+          clickTarget.dispatchEvent(new MouseEvent("click", eventInit));
+          if (typeof clickTarget.click === "function") clickTarget.click();
+
+          return {
+            clicked: true,
+            tag: clickTarget.tagName?.toLowerCase() || "",
+            className: String(clickTarget.className || "").slice(0, 120)
+          };
+        };
+
+        return clickAtPoint(x, y);
       }
     })
       .then((results) => sendResponse({ ok: true, result: results?.[0]?.result || null }))
