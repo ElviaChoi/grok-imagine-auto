@@ -37,9 +37,10 @@ main {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  padding: 14px;
+  padding: 14px 14px 106px;
   gap: 12px;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .top {
@@ -420,6 +421,43 @@ h1 {
   margin-top: 10px;
 }
 
+.run-dock {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 50;
+  padding: 10px 14px 12px;
+  border-top: 1px solid #2d4533;
+  background: linear-gradient(180deg, rgba(13, 18, 14, 0.94), #0d120e 34%);
+  box-shadow: 0 -12px 24px rgba(0, 0, 0, 0.38);
+}
+
+.dock-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 9px;
+}
+
+.dock-jump {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 62px;
+  margin: 0;
+  padding: 5px 8px;
+  border-color: #435047;
+  color: #d9ead4;
+  background: #202a24;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.dock-jump:hover {
+  background: #243228;
+}
+
 .field {
   display: grid;
   gap: 6px;
@@ -636,15 +674,20 @@ button:disabled {
 }
 
 #status {
-  min-height: 46px;
-  max-height: 160px;
-  overflow: auto;
-  margin: 12px 0 0;
-  padding: 10px 11px;
-  border: 1px solid #18311b;
-  border-radius: 12px;
+  min-width: 0;
+  min-height: 0;
+  max-height: none;
+  overflow-y: hidden;
+  overflow-x: hidden;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   color: #d7f5d7;
-  background: #071007;
-  white-space: pre-wrap;
-  font-size: 12px;
+  background: transparent;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  line-height: 1.35;
 }

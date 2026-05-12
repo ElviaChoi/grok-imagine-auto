@@ -535,6 +535,13 @@ function bindAutosave() {
     setStatus(`${sceneModeLabel()} 생성용 ${limit}개 장면으로 맞췄습니다.`);
   });
 
+  $("#scrollTop").addEventListener("click", () => {
+    const options = { top: 0, behavior: "smooth" };
+    document.querySelector("main")?.scrollTo(options);
+    document.scrollingElement?.scrollTo(options);
+    window.scrollTo(options);
+  });
+
   $("#importScenes").addEventListener("click", async () => {
     try {
       await importScenesFromTable();
