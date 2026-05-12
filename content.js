@@ -798,6 +798,29 @@
     return images[0]?.url || "";
   }
 
+  function currentReadyImageItems(previousUrls = "", previousDetailKeys = [], seenMarker = "") {
+    const hasBaseline = previousUrlSet(previousUrls).size || previousDetailKeys.length || seenMarker;
+    if (!hasBaseline) return [];
+
+    const previousDetailSet = new Set(previousDetailKeys);
+    const directItems = currentNewImageItems(previousUrls, seenMarker)
+      .filter((item) => {
+        if (imageUrlLooksPreviewOnly(item.url) && !cardLooksLargeEnoughForDirectPreview(item)) return false;
+        const width = item.naturalWidth || item.renderedWidth || 0;
+        const height = item.naturalHeight || item.renderedHeight || 0;
+        return Math.min(width, height) >= 240 && width * height >= 180_000;
+      })
+      .slice(0, 1)
+      .map((item, index) => detailImageItemFromGeneratedItem(item, index));
+
+    if (directItems.length) return directItems;
+
+    return unmarkedResultImageCards(seenMarker)
+      .filter((card) => !previousDetailSet.has(detailCardKey(card)))
+      .slice(0, 1)
+      .map((card, index) => detailImageItemFromGeneratedItem(card, index));
+  }
+
   function directImageItemFromCard(card, index = 0, previousUrls = "") {
     const url = card?.url || imageLikeUrlFromElement(card?.img || card?.media);
     if (!url || /^detail:/i.test(url)) return null;
@@ -2290,7 +2313,7 @@
         currentFinalMediaUrl = finalMediaUrl;
         currentImageUploaded = imageUploaded;
 
-        await saveSession(payload, i, true, { phase, previousUrl, finalMediaUrl, imageUploaded });
+        await saveSession(payload, i, true, { phase, previousUrl, previousDetailKeys, finalMediaUrl, imageUploaded });
 
         const scene = scenes[i];
         if (!scene.image) {
@@ -2301,6 +2324,28 @@
         const padded = String(number).padStart(3, "0");
         const total = scenes.length;
         const sceneLabel = `장면 ${i + 1}/${total}`;
+
+        const isVideo = generation.mode === "video";
+        let imageItems = [];
+
+        if (!isVideo && state && phase !== "start" && phase !== "ready") {
+          const readyImageItems = currentReadyImageItems(previousUrl, previousDetailKeys, previousDetailMarker);
+          if (readyImageItems.length) {
+            imageItems = readyImageItems;
+            finalMediaUrl = imageItems[0]?.url || "";
+            currentFinalMediaUrl = mediaUrlKey(finalMediaUrl);
+            phase = "downloading";
+            currentPhase = phase;
+            await saveSession(payload, i, true, {
+              phase,
+              previousUrl,
+              previousDetailKeys,
+              finalMediaUrl: currentFinalMediaUrl,
+              imageUploaded
+            });
+            status(`${sceneLabel} · 이미 생성된 이미지 결과를 찾아 저장부터 이어갑니다.`);
+          }
+        }
 
         if (phase === "submitted") {
           status(`${sceneLabel} · 이미 제출된 작업입니다.\n생성 결과를 기다리는 중입니다.`);
@@ -2351,12 +2396,10 @@
           await saveSession(payload, i, true, { phase, previousUrl, previousDetailKeys, imageUploaded });
         }
 
-        const isVideo = generation.mode === "video";
         const retryingPendingDownload = phase === "downloading" && finalMediaUrl;
-        let imageItems = [];
         if (retryingPendingDownload) {
           status(`${sceneLabel} · 저장이 끝나지 않은 작업을 다시 확인합니다.`);
-          if (!isVideo) {
+          if (!isVideo && !imageItems.length) {
             imageItems = await waitForGeneratedImages(previousUrl, generation, previousDetailKeys, previousDetailMarker);
             finalMediaUrl = imageItems[0]?.url || "";
             currentFinalMediaUrl = mediaUrlKey(finalMediaUrl);
