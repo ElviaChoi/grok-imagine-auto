@@ -260,6 +260,36 @@ h1 {
   background: #171917;
 }
 
+.scene-limit-note {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  margin: -2px 3px 2px;
+  padding: 7px 9px;
+  border: 1px solid #38473f;
+  border-radius: 8px;
+  color: #d7eadf;
+  background: #141d18;
+  font-size: 10.5px;
+  line-height: 1.25;
+}
+
+.scene-limit-note strong {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border-radius: 6px;
+  color: #0f1a0b;
+  background: #d4e77c;
+  font-size: 10px;
+  line-height: 1.1;
+}
+
+.scene-limit-note span {
+  min-width: 0;
+}
+
 .image-save-note {
   grid-column: 1 / -1;
   display: flex;

@@ -5,7 +5,7 @@ const SESSION_KEY = "grokVideoAutoSession";
 const DEFAULT_SCENE_COUNT = 3;
 const SCENE_LIMIT_BY_MODE = {
   video: 20,
-  image: 40
+  image: 30
 };
 const DEFAULT_PREFIX_BY_MODE = {
   video: "grok-video",
@@ -60,6 +60,15 @@ function updateSceneTargetButton() {
   const strong = button.querySelector("strong");
   if (strong) strong.textContent = `${limit}개로 맞추기`;
   button.title = `${sceneModeLabel(mode)} 생성 한도인 ${limit}개로 장면 개수를 맞춥니다. 부족하면 자동 추가하고, 많으면 아래쪽부터 정리합니다.`;
+}
+
+function updateSceneLimitNote() {
+  const note = $("#sceneLimitNote");
+  if (!note) return;
+  note.innerHTML = `
+    <strong>생성 한도</strong>
+    <span>이미지 최대 ${SCENE_LIMIT_BY_MODE.image}개 · 비디오 최대 ${SCENE_LIMIT_BY_MODE.video}개</span>
+  `;
 }
 
 function ensureWithinSceneLimit(count, mode = getSegmentedValue("mode")) {
@@ -189,6 +198,7 @@ function createSceneRow(index, prompt = "") {
   row.querySelector(".remove-scene").addEventListener("click", () => {
     row.remove();
     renumberScenes();
+    updateSceneLimitNote();
     scheduleSave();
   });
 
@@ -211,6 +221,7 @@ function setSceneImage(row, file) {
 function addScene(prompt = "") {
   sceneList.appendChild(createSceneRow(sceneList.children.length, prompt));
   updateSourceTypeUi();
+  updateSceneLimitNote();
 }
 
 function renumberScenes() {
@@ -228,6 +239,7 @@ function ensureSceneCount(count) {
     sceneList.lastElementChild.remove();
   }
   renumberScenes();
+  updateSceneLimitNote();
   scheduleSave();
 }
 
@@ -296,6 +308,7 @@ function getGenerationSettings() {
 function updateModeUi() {
   const imageMode = getSegmentedValue("mode") === "image";
   updateSceneTargetButton();
+  updateSceneLimitNote();
 
   document.querySelectorAll(".image-only").forEach((group) => {
     group.classList.toggle("hidden", !imageMode);
@@ -509,6 +522,7 @@ function bindAutosave() {
     const limit = sceneLimitForMode();
     if (sceneList.children.length >= limit) {
       setStatus(`${sceneModeLabel()} 생성은 최대 ${limit}개 장면까지 추가할 수 있습니다.`);
+      updateSceneLimitNote();
       return;
     }
     addScene("");
