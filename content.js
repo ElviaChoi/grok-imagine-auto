@@ -1,11 +1,12 @@
 (() => {
-  const SCRIPT_VERSION = "2026-05-12-image-detail-click-v73";
+  const SCRIPT_VERSION = "2026-05-12-image-detail-click-v74";
   const DEBUG = false;
   const OVERLAY_PROGRESS_HIDE_MS = 2500;
   const OVERLAY_SUCCESS_HIDE_MS = 4000;
   const OVERLAY_FADE_MS = 250;
   const UPSCALE_CHOICE_WAIT_MS = 8_000;
   const UPSCALE_CHOICE_SETTLE_MS = 10_000;
+  const IMAGE_PREFERENCE_SURVEY_SETTLE_MS = 2_500;
 
   if (window.__grokImagineVideoAutomatorVersion === SCRIPT_VERSION) {
     return;
@@ -872,6 +873,10 @@
 
     while (Date.now() - started < WAIT.generate) {
       assertNotStopped();
+      if (await handleImagePreferenceSurveyIfNeeded()) {
+        await sleep(1_000);
+        continue;
+      }
 
       const items = currentNewImageItems(previousUrl, seenMarker);
       const detailCards = resultImageCards();
@@ -1190,6 +1195,113 @@
     return true;
   }
 
+  function imagePreferenceSurveyIsOpen() {
+    const text = normalize(document.body?.innerText || document.body?.textContent || "");
+    if (!text) return false;
+    return (
+      text.includes("\uC5B4\uB5A4 \uC774\uBBF8\uC9C0\uB97C \uB0A8\uACA8\uB450\uACE0") ||
+      (text.includes("which image") && (text.includes("keep") || text.includes("prefer"))) ||
+      (text.includes("feedback") && text.includes("image quality"))
+    );
+  }
+
+  function imagePreferenceSurveyRoot() {
+    if (!imagePreferenceSurveyIsOpen()) return null;
+    const marker =
+      findVisibleTextElement([
+        "\uC5B4\uB5A4 \uC774\uBBF8\uC9C0\uB97C \uB0A8\uACA8\uB450\uACE0",
+        "which image",
+        "image quality"
+      ]) || document.body;
+
+    let root = marker;
+    while (root && root !== document.body) {
+      const rect = root.getBoundingClientRect();
+      const largeImages = [...root.querySelectorAll("img")]
+        .filter(visible)
+        .filter((img) => {
+          const imgRect = img.getBoundingClientRect();
+          return imgRect.width >= 140 && imgRect.height >= 90 && imgRect.width * imgRect.height >= 20_000;
+        });
+      if (largeImages.length >= 2 && rect.width >= 360 && rect.height >= 180) return root;
+      root = root.parentElement;
+    }
+    return document.body;
+  }
+
+  function imagePreferenceSurveyCards(root = imagePreferenceSurveyRoot()) {
+    if (!root) return [];
+    return [...root.querySelectorAll("img")]
+      .filter(visible)
+      .filter((img) => !ignoredImageContext(img))
+      .map((img) => {
+        const rect = img.getBoundingClientRect();
+        return {
+          img,
+          clickTarget: img.closest(".cursor-pointer") || img.closest("button, [role='button'], a") || img,
+          url: img.currentSrc || img.src || "",
+          left: rect.left,
+          top: rect.top,
+          renderedWidth: rect.width,
+          renderedHeight: rect.height,
+          area: rect.width * rect.height
+        };
+      })
+      .filter((item) => {
+        if (!/^https?:|^blob:|^data:image\//i.test(item.url)) return false;
+        if (item.renderedWidth < 140 || item.renderedHeight < 90) return false;
+        if (item.area < 20_000) return false;
+        if (item.top < 80 || item.left < 0) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const rowDelta = a.top - b.top;
+        if (Math.abs(rowDelta) > 32) return rowDelta;
+        return a.left - b.left;
+      });
+  }
+
+  async function handleImagePreferenceSurveyIfNeeded() {
+    const root = imagePreferenceSurveyRoot();
+    if (!root) return false;
+
+    const cards = imagePreferenceSurveyCards(root);
+    if (cards.length < 2) return false;
+
+    const sorted = cards.slice(0, 2).sort((a, b) => a.left - b.left);
+    const left = sorted[0];
+    status("Grok \uC774\uBBF8\uC9C0 \uC120\uD638\uB3C4 \uC870\uC0AC \uD654\uBA74\uC774 \uB5A0\uC11C \uC67C\uCABD \uC774\uBBF8\uC9C0\uB97C \uC120\uD0DD\uD569\uB2C8\uB2E4.");
+    debug("image preference survey auto-select", {
+      candidates: sorted.map((item) => ({
+        left: Math.round(item.left),
+        top: Math.round(item.top),
+        renderedWidth: Math.round(item.renderedWidth),
+        renderedHeight: Math.round(item.renderedHeight),
+        url: String(item.url || "").slice(0, 160)
+      }))
+    });
+
+    const clickedInMainWorld = await clickImageResultInMainWorld(left.clickTarget || left.img, 0.5, 0.5).catch(() => false);
+    if (!clickedInMainWorld) click(left.clickTarget || left.img);
+    await sleep(900);
+
+    if (!imagePreferenceSurveyRoot()) {
+      await sleep(IMAGE_PREFERENCE_SURVEY_SETTLE_MS);
+      return true;
+    }
+
+    await closeOpenMenus();
+    if (!imagePreferenceSurveyRoot()) return true;
+
+    if (history.length > 1) {
+      history.back();
+      await waitFor(() => (!imagePreferenceSurveyRoot() ? true : null), IMAGE_PREFERENCE_SURVEY_SETTLE_MS, "image preference survey exit").catch(() => null);
+    }
+
+    await sleep(800);
+    return true;
+  }
+
   function findDetailDownloadButton() {
     const buttons = [...document.querySelectorAll("button[aria-label='\uB2E4\uC6B4\uB85C\uB4DC'], button[aria-label='Download']")]
       .filter(visible)
@@ -1378,6 +1490,7 @@
   }
 
   async function openDetailDownloadButton(card) {
+    await handleImagePreferenceSurveyIfNeeded();
     if (isImaginePostDetailPage()) {
       const filmstripSelected = await ensureGeneratedFilmstripSelection(card?.index || 0);
       const existingDetailImage = findDetailMainImage();
@@ -1437,6 +1550,7 @@
   }
 
   async function downloadImageViaDetail(itemOrIndex, filename) {
+    await handleImagePreferenceSurveyIfNeeded();
     const index = typeof itemOrIndex === "number" ? itemOrIndex : itemOrIndex?.index || 0;
     const expectedImageKey =
       typeof itemOrIndex === "object" && itemOrIndex
