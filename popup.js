@@ -3,7 +3,10 @@ const $ = (selector) => document.querySelector(selector);
 const STORAGE_KEY = "grokVideoAutoSettings";
 const SESSION_KEY = "grokVideoAutoSession";
 const DEFAULT_SCENE_COUNT = 3;
-const TARGET_SCENE_COUNT = 20;
+const SCENE_LIMIT_BY_MODE = {
+  video: 20,
+  image: 40
+};
 const DEFAULT_PREFIX_BY_MODE = {
   video: "grok-video",
   image: "grok-image"
@@ -39,6 +42,31 @@ async function showRuntimeInfo() {
 
 function defaultPrefixForMode(mode = getSegmentedValue("mode")) {
   return DEFAULT_PREFIX_BY_MODE[mode] || DEFAULT_PREFIX_BY_MODE.video;
+}
+
+function sceneLimitForMode(mode = getSegmentedValue("mode")) {
+  return SCENE_LIMIT_BY_MODE[mode] || SCENE_LIMIT_BY_MODE.video;
+}
+
+function sceneModeLabel(mode = getSegmentedValue("mode")) {
+  return mode === "image" ? "이미지" : "비디오";
+}
+
+function updateSceneTargetButton() {
+  const button = $("#make20");
+  if (!button) return;
+  const mode = getSegmentedValue("mode");
+  const limit = sceneLimitForMode(mode);
+  const strong = button.querySelector("strong");
+  if (strong) strong.textContent = `${limit}개로 맞추기`;
+  button.title = `${sceneModeLabel(mode)} 생성 한도인 ${limit}개로 장면 개수를 맞춥니다. 부족하면 자동 추가하고, 많으면 아래쪽부터 정리합니다.`;
+}
+
+function ensureWithinSceneLimit(count, mode = getSegmentedValue("mode")) {
+  const limit = sceneLimitForMode(mode);
+  if (count > limit) {
+    throw new Error(`${sceneModeLabel(mode)} 생성은 최대 ${limit}개 장면까지 실행할 수 있습니다. 현재 ${count}개입니다.`);
+  }
 }
 
 function builtInPrefix(value) {
@@ -267,6 +295,7 @@ function getGenerationSettings() {
 
 function updateModeUi() {
   const imageMode = getSegmentedValue("mode") === "image";
+  updateSceneTargetButton();
 
   document.querySelectorAll(".image-only").forEach((group) => {
     group.classList.toggle("hidden", !imageMode);
@@ -406,6 +435,8 @@ async function importScenesFromTable() {
     throw new Error("가져올 장면이 없습니다. image,prompt 형식인지 확인해 주세요.");
   }
 
+  ensureWithinSceneLimit(imported.length);
+
   const imageFiles = [...$("#bulkImages").files];
   const imageMap = new Map();
   imageFiles.forEach((file) => {
@@ -475,12 +506,19 @@ function bindAutosave() {
   });
 
   $("#addScene").addEventListener("click", () => {
+    const limit = sceneLimitForMode();
+    if (sceneList.children.length >= limit) {
+      setStatus(`${sceneModeLabel()} 생성은 최대 ${limit}개 장면까지 추가할 수 있습니다.`);
+      return;
+    }
     addScene("");
     scheduleSave();
   });
 
   $("#make20").addEventListener("click", () => {
-    ensureSceneCount(TARGET_SCENE_COUNT);
+    const limit = sceneLimitForMode();
+    ensureSceneCount(limit);
+    setStatus(`${sceneModeLabel()} 생성용 ${limit}개 장면으로 맞췄습니다.`);
   });
 
   $("#importScenes").addEventListener("click", async () => {
@@ -652,12 +690,14 @@ startButton.addEventListener("click", async () => {
     await ensureContentScript(tab.id);
 
     const scenes = await buildScenes();
+    const generation = getGenerationSettings();
+    ensureWithinSceneLimit(scenes.length, generation.mode);
     const payload = {
       scenes,
       prefix: $("#prefix").value.trim() || defaultPrefixForMode(),
       startIndex: positiveInteger($("#startIndex").value),
       upscale: $("#upscale").checked,
-      generation: getGenerationSettings()
+      generation
     };
 
     await sendToTab(tab.id, { type: "GROK_AUTO_START_V2", payload });
