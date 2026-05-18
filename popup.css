@@ -37,7 +37,7 @@ main {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  padding: 14px 14px 106px;
+  padding: 14px 14px 124px;
   gap: 12px;
   overflow-y: auto;
   overflow-x: hidden;
@@ -436,7 +436,7 @@ h1 {
 .dock-meta {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 30px;
-  align-items: center;
+  align-items: start;
   gap: 8px;
   margin-bottom: 9px;
 }
@@ -676,9 +676,9 @@ button:disabled {
 #status {
   width: 100%;
   min-width: 0;
-  min-height: 0;
-  max-height: none;
-  overflow-y: hidden;
+  min-height: 30px;
+  max-height: 30px;
+  overflow: hidden;
   overflow-x: hidden;
   margin: 0;
   padding: 0;
@@ -686,9 +686,12 @@ button:disabled {
   border-radius: 0;
   color: #d7f5d7;
   background: transparent;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
   overflow-wrap: anywhere;
+  word-break: break-word;
   font-size: 11px;
   line-height: 1.35;
 }

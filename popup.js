@@ -33,6 +33,19 @@ let liveAutomation = false;
 
 function setStatus(text) {
   statusEl.textContent = text;
+  statusEl.title = text;
+}
+
+function friendlyErrorMessage(error) {
+  const message = String(error?.message || error || "알 수 없는 오류가 발생했습니다.");
+  if (message.includes("Could not establish connection") || message.includes("Receiving end does not exist")) {
+    return "Grok 탭을 찾지 못했습니다. Grok 페이지를 새로고침한 뒤 다시 시도해 주세요.";
+  }
+  return message;
+}
+
+function setErrorStatus(error, prefix = "오류") {
+  setStatus(`${prefix}: ${friendlyErrorMessage(error)}`);
 }
 
 async function showRuntimeInfo() {
@@ -546,7 +559,7 @@ function bindAutosave() {
     try {
       await importScenesFromTable();
     } catch (error) {
-      setStatus(`오류: ${error.message}`);
+      setErrorStatus(error);
     }
   });
 
@@ -725,7 +738,7 @@ startButton.addEventListener("click", async () => {
     setStatus(`${scenes.length}개 장면 작업을 시작합니다.`);
   } catch (error) {
     liveAutomation = false;
-    setStatus(`오류: ${error.message}`);
+    setErrorStatus(error);
   } finally {
     startButton.disabled = false;
   }
@@ -739,7 +752,7 @@ stopButton.addEventListener("click", async () => {
     liveAutomation = false;
     setStatus("중지 요청됨");
   } catch (error) {
-    setStatus(`오류: ${error.message}`);
+    setErrorStatus(error);
   }
 });
 
@@ -760,7 +773,7 @@ $("#resumeSession").addEventListener("click", async () => {
     await sendRecoveryAction("GROK_AUTO_RESUME");
     setStatus("저장된 지점부터 이어서 실행합니다.");
   } catch (error) {
-    setStatus(`오류: ${error.message}`);
+    setErrorStatus(error);
   }
 });
 
@@ -769,7 +782,7 @@ $("#retryScene").addEventListener("click", async () => {
     await sendRecoveryAction("GROK_AUTO_RETRY_SCENE");
     setStatus("현재 장면을 처음부터 다시 시도합니다.");
   } catch (error) {
-    setStatus(`오류: ${error.message}`);
+    setErrorStatus(error);
   }
 });
 
@@ -778,7 +791,7 @@ $("#skipScene").addEventListener("click", async () => {
     await sendRecoveryAction("GROK_AUTO_SKIP_SCENE");
     setStatus("현재 장면을 건너뛰고 다음 장면부터 실행합니다.");
   } catch (error) {
-    setStatus(`오류: ${error.message}`);
+    setErrorStatus(error);
   }
 });
 
@@ -791,7 +804,7 @@ $("#clearSession").addEventListener("click", async () => {
     await sendRecoveryAction("GROK_AUTO_CLEAR_SESSION");
     setStatus("저장된 진행기록을 삭제했습니다.");
   } catch (error) {
-    setStatus(`오류: ${error.message}`);
+    setErrorStatus(error);
   }
 });
 
@@ -806,5 +819,5 @@ loadSettings()
   .then(refreshRecoveryState)
   .then(showRuntimeInfo)
   .catch((error) => {
-    setStatus(`저장값 불러오기 실패: ${error.message}`);
+    setErrorStatus(error, "저장값 불러오기 실패");
   });
