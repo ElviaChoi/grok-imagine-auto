@@ -37,7 +37,7 @@ main {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  padding: 14px 14px 124px;
+  padding: 14px 14px 168px;
   gap: 12px;
   overflow-y: auto;
   overflow-x: hidden;
@@ -676,22 +676,34 @@ button:disabled {
 #status {
   width: 100%;
   min-width: 0;
-  min-height: 30px;
-  max-height: 30px;
-  overflow: hidden;
+  min-height: 48px;
+  max-height: 76px;
+  overflow-y: auto;
   overflow-x: hidden;
   margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
+  padding: 8px 9px;
+  border: 1px solid #2c3f32;
+  border-radius: 8px;
   color: #d7f5d7;
-  background: transparent;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  white-space: normal;
+  background: #101711;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
   font-size: 11px;
   line-height: 1.35;
+  scrollbar-width: thin;
+  scrollbar-color: #4e6955 #101711;
+}
+
+#status::-webkit-scrollbar {
+  width: 6px;
+}
+
+#status::-webkit-scrollbar-track {
+  background: #101711;
+}
+
+#status::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #4e6955;
 }
