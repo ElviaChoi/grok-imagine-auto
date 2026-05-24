@@ -925,7 +925,7 @@
         const selected = firstSeenItems.slice(0, 1).map((item, index) => detailImageItemFromGeneratedItem(item, index));
         const item = selected[0];
         status(
-          `이미지 결과를 찾았습니다.\n첫 번째 이미지만 자동 저장합니다.\n감지된 이미지: ${firstSeenItems.length}개 · 저장 크기: ${item.naturalWidth || Math.round(item.renderedWidth)}x${item.naturalHeight || Math.round(item.renderedHeight)}`
+          `이미지 결과를 찾았습니다.\n여러 이미지가 생성된 경우, 생성된 이미지 중 1개만 다운로드합니다.\n감지된 이미지: ${firstSeenItems.length}개 · 저장 크기: ${item.naturalWidth || Math.round(item.renderedWidth)}x${item.naturalHeight || Math.round(item.renderedHeight)}`
         );
         return selected;
       }
@@ -958,7 +958,7 @@
         const savedItem = directSelected[0] || selected[0];
         const method = "detail page";
         status(
-          `이미지 결과가 준비되었습니다.\n첫 번째 이미지만 자동 저장합니다.\n나머지 결과는 Grok 화면에서 직접 저장할 수 있습니다.\n저장 크기: ${savedItem.naturalWidth || Math.round(savedItem.renderedWidth)}x${savedItem.naturalHeight || Math.round(savedItem.renderedHeight)}`
+          `이미지 결과가 준비되었습니다.\n여러 이미지가 생성된 경우, 생성된 이미지 중 1개만 다운로드합니다.\n나머지 결과는 Grok 화면에서 직접 저장할 수 있습니다.\n저장 크기: ${savedItem.naturalWidth || Math.round(savedItem.renderedWidth)}x${savedItem.naturalHeight || Math.round(savedItem.renderedHeight)}`
         );
         return selected;
       }
@@ -966,7 +966,7 @@
         if (!items.length && newDetailCards.length && Date.now() - started > 4_000) {
         const selected = [{ detailOnly: true, index: 0, url: "detail:0" }];
         status(
-          "이미지 결과 카드가 보입니다.\n첫 번째 결과를 자동 저장합니다.\n나머지는 Grok 화면에서 직접 저장할 수 있습니다."
+          "이미지 결과 카드가 보입니다.\n여러 이미지가 생성된 경우, 생성된 이미지 중 1개만 다운로드합니다.\n나머지는 Grok 화면에서 직접 저장할 수 있습니다."
         );
         debug("using detail download fallback", {
           cards: detailCards.length,
@@ -988,7 +988,7 @@
         if (!items.length && newDetailCards.length) {
           const selected = [{ detailOnly: true, index: 0, url: "detail:0" }];
           status(
-            "이미지 결과 카드가 보입니다.\n첫 번째 결과를 자동 저장합니다.\n나머지는 Grok 화면에서 직접 저장할 수 있습니다."
+            "이미지 결과 카드가 보입니다.\n여러 이미지가 생성된 경우, 생성된 이미지 중 1개만 다운로드합니다.\n나머지는 Grok 화면에서 직접 저장할 수 있습니다."
           );
           debug("using detail download fallback", {
             cards: detailCards.length,
@@ -2451,7 +2451,7 @@
             const item = imageItems[imageIndex];
             const suffix = imageItems.length > 1 ? `_${String(imageIndex + 1).padStart(2, "0")}` : "";
             const filename = `${baseFilename}${suffix}.${item.detailOnly ? "png" : imageExtensionForUrl(item.url)}`;
-            status(`${sceneLabel} · 첫 번째 이미지 결과를 저장하는 중입니다.\n${filename}`);
+            status(`${sceneLabel} · 생성된 이미지 중 1개를 저장하는 중입니다.\n${filename}`);
             const itemDownloadKey = mediaUrlKey(item.sourceUrl || item.url);
             if (retryingPendingDownload && downloadedUrls.has(itemDownloadKey)) {
               status(`${sceneLabel} · 이미지 ${imageIndex + 1}은 이미 저장되어 있습니다.`);
